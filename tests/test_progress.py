@@ -10,7 +10,7 @@ class SlackProgressRendererTest(unittest.TestCase):
     def test_renders_lifecycle_progress_and_final_output(self) -> None:
         renderer = SlackProgressRenderer()
 
-        self.assertEqual("Started task task_1.", renderer.render("task_1", HarnessEvent(type="started")))
+        self.assertIsNone(renderer.render("task_1", HarnessEvent(type="started")))
         self.assertEqual(
             "Progress: running tests",
             renderer.render("task_1", HarnessEvent(type="progress", message="running tests")),
@@ -19,7 +19,7 @@ class SlackProgressRendererTest(unittest.TestCase):
             "Done:\nship complete",
             renderer.render("task_1", HarnessEvent(type="output", message="ship complete")),
         )
-        self.assertEqual("Task task_1 completed.", renderer.render("task_1", HarnessEvent(type="completed")))
+        self.assertIsNone(renderer.render("task_1", HarnessEvent(type="completed")))
 
     def test_renders_usage_without_private_reasoning(self) -> None:
         renderer = SlackProgressRenderer()

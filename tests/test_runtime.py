@@ -72,7 +72,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn(("D1", "100.1", "Progress: working"), slack.messages)
             self.assertIn(("D2", "200.1", "Done:\ndone"), slack.messages)
 
-    def test_manager_posts_task_started_even_when_adapter_does_not_emit_started(self) -> None:
+    def test_manager_logs_task_started_to_terminal_not_slack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -85,12 +85,13 @@ class RuntimeTest(unittest.TestCase):
             db.close()
 
             slack = FakeSlackReplies()
+            terminal: list[str] = []
             adapter = ScriptedHarnessAdapter(
                 events=[
                     HarnessEvent(type="completed"),
                 ]
             )
-            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp), event_output=terminal.append)
             try:
                 asyncio.run(manager.run_until_idle())
                 task_id = manager.db.execute("SELECT id FROM tasks WHERE session_id = ?", (session.id,)).fetchone()["id"]
@@ -102,9 +103,11 @@ class RuntimeTest(unittest.TestCase):
                 manager.close()
 
             self.assertEqual(1, started_count)
-            self.assertIn(("D1", "100.1", f"Started task {task_id}."), slack.messages)
+            self.assertNotIn(("D1", "100.1", f"Started task {task_id}."), slack.messages)
+            self.assertIn(f"task {task_id} started", terminal)
+            self.assertIn(f"task {task_id} completed", terminal)
 
-    def test_manager_does_not_duplicate_adapter_started_event(self) -> None:
+    def test_manager_does_not_duplicate_adapter_started_terminal_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -117,16 +120,17 @@ class RuntimeTest(unittest.TestCase):
             db.close()
 
             slack = FakeSlackReplies()
+            terminal: list[str] = []
             adapter = ScriptedHarnessAdapter(
                 events=[
                     HarnessEvent(type="started"),
                     HarnessEvent(type="completed"),
                 ]
             )
-            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp), event_output=terminal.append)
             try:
                 asyncio.run(manager.run_until_idle())
-                started_messages = [message for _, _, message in slack.messages if message.startswith("Started task ")]
+                started_messages = [message for message in terminal if message.endswith(" started")]
             finally:
                 manager.close()
 

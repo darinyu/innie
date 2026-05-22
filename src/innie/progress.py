@@ -6,7 +6,7 @@ from .harness import HarnessEvent
 class SlackProgressRenderer:
     def render(self, task_id: str, event: HarnessEvent) -> str | None:
         if event.type == "started":
-            return f"Started task {task_id}."
+            return None
         if event.type == "progress" and event.message:
             return f"Progress: {event.message}"
         if event.type == "tool_use" and event.message:
@@ -22,7 +22,7 @@ class SlackProgressRenderer:
                 f"{event.usage.output_tokens} output, {cache_pct}% cache hit."
             )
         if event.type == "completed":
-            return f"Task {task_id} completed."
+            return None
         if event.type == "failed":
             return f"Task {task_id} failed: {event.message or 'no error message'}"
         if event.type == "canceled":

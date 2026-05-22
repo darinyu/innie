@@ -296,6 +296,7 @@ async def process_payload(
         adapters=adapters or adapter_map(verbose=verbose, output=output),
         slack=slack,
         workspace=workspace,
+        event_output=output if verbose else None,
     )
     try:
         await manager.run_until_idle()

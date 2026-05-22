@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import sqlite3
+from typing import Callable
 
 from .adapters import CodexCliAdapter
 from .control import SlackReplyClient
@@ -23,6 +24,7 @@ from .tasks import (
 
 
 TERMINAL_STATUSES = {"canceled", "completed"}
+EventOutput = Callable[[str], None]
 
 
 class SessionActor:
@@ -35,6 +37,7 @@ class SessionActor:
         slack: SlackReplyClient | None,
         workspace: Path,
         progress: SlackProgressRenderer,
+        event_output: EventOutput | None = None,
     ) -> None:
         self._db = db
         self.session_id = session_id
@@ -42,6 +45,7 @@ class SessionActor:
         self._slack = slack
         self._workspace = workspace
         self._progress = progress
+        self._event_output = event_output
         self._cancel_requested = False
 
     def cancel(self) -> None:
@@ -91,6 +95,7 @@ class SessionActor:
     async def _run_harness_turn(self, adapter: HarnessAdapter, task: TaskRecord, row) -> str:
         start_event = HarnessEvent(type="started")
         append_harness_event(self._db, task, start_event)
+        self._post_terminal_event(task.id, start_event)
         self._post_progress(task.id, start_event, row)
         self._db.commit()
 
@@ -110,6 +115,7 @@ class SessionActor:
             if event.type == "started":
                 continue
             append_harness_event(self._db, task, event)
+            self._post_terminal_event(task.id, event)
             self._post_progress(task.id, event, row)
             if event.type == "failed":
                 terminal_status = "failed"
@@ -130,6 +136,14 @@ class SessionActor:
             text=text,
         )
 
+    def _post_terminal_event(self, task_id: str, event: HarnessEvent) -> None:
+        if self._event_output is None:
+            return
+        if event.type == "started":
+            self._event_output(f"task {task_id} started")
+        elif event.type == "completed":
+            self._event_output(f"task {task_id} completed")
+
 
 class SessionManager:
     def __init__(
@@ -139,6 +153,7 @@ class SessionManager:
         adapters: dict[str, HarnessAdapter] | None = None,
         slack: SlackReplyClient | None = None,
         workspace: Path | None = None,
+        event_output: EventOutput | None = None,
     ) -> None:
         self.db_path = db_path
         self.db = connect(db_path)
@@ -147,6 +162,7 @@ class SessionManager:
         self.slack = slack
         self.workspace = workspace or db_path.parent.parent
         self.progress = SlackProgressRenderer()
+        self.event_output = event_output
         self.actors: dict[str, SessionActor] = {}
 
     def close(self) -> None:
@@ -173,6 +189,7 @@ class SessionManager:
                     slack=self.slack,
                     workspace=self.workspace,
                     progress=self.progress,
+                    event_output=self.event_output,
                 ),
             )
         return list(self.actors)
