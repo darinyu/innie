@@ -227,6 +227,7 @@ def run_slack_setup(
         redirect_url,
         oauth_url,
         prompt,
+        output,
         messages,
         timeout_seconds=oauth_timeout_seconds,
     )
@@ -310,9 +311,11 @@ def _collect_oauth_code(
     redirect_url: str,
     oauth_url: str,
     prompt: PromptFn,
+    output: OutputFn,
     messages: list[str],
     *,
     timeout_seconds: int,
+    on_server_started: Callable[[], str | None] | None = None,
 ) -> str:
     result: dict[str, str] = {}
     parsed = parse.urlparse(redirect_url)
@@ -342,15 +345,17 @@ def _collect_oauth_code(
         return _extract_code(value)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    pasted = prompt(
+    output(
         "Step 5/6 - Install the app with OAuth.\n"
         f"  Open this URL: {oauth_url}\n"
-        "  If your browser can reach localhost, approve the app and press Enter here.\n"
-        "  If the browser cannot reach localhost, paste the final callback URL or OAuth code here: "
-    ).strip()
-    if pasted:
-        server.shutdown()
-        return _extract_code(pasted)
+        "  If your browser can reach localhost, Innie continues automatically after approval.\n"
+        "  If the browser cannot reach localhost, wait for the paste fallback below.\n"
+    )
+    if on_server_started:
+        callback_code = on_server_started()
+        if callback_code:
+            result["code"] = callback_code
+            server.shutdown()
     messages.append(f"Waiting up to {timeout_seconds} seconds for OAuth callback on localhost:{port}.")
     messages.append("Remote/cloud users: if the browser fails to load localhost, copy the full URL and paste it here.")
     deadline = time.monotonic() + timeout_seconds

@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import os
+import threading
 import tempfile
 import unittest
+from unittest import mock
 
-from innie.slack_setup import build_manifest, run_slack_setup
+from innie.slack_setup import _collect_oauth_code, build_manifest, run_slack_setup
 
 
 class FakeSlackApi:
@@ -135,6 +137,35 @@ class SlackSetupTest(unittest.TestCase):
             config = (workspace / ".innie" / "config.yaml").read_text()
             self.assertIn("trigger_mode: user_mention", config)
             self.assertIn("watched_user_id: U_INSTALLER", config)
+
+    def test_oauth_collector_continues_automatically_when_callback_arrives(self) -> None:
+        server = FakeOAuthServer()
+
+        with mock.patch("innie.slack_setup.http.server.HTTPServer", return_value=server):
+            code = _collect_oauth_code(
+                "http://localhost:8765/callback",
+                "https://slack.com/oauth",
+                prompt=lambda _text: self.fail("prompt should not block before callback"),
+                output=lambda _text: None,
+                messages=[],
+                timeout_seconds=2,
+                on_server_started=lambda: "auto-code",
+            )
+
+        self.assertEqual("auto-code", code)
+
+
+class FakeOAuthServer:
+    def __init__(self) -> None:
+        self._code: str | None = None
+        self._shutdown = threading.Event()
+
+    def serve_forever(self) -> None:
+        self._shutdown.wait(timeout=2)
+
+    def shutdown(self) -> None:
+        self._shutdown.set()
+
 
 
 if __name__ == "__main__":
