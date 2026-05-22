@@ -3,10 +3,12 @@
 ## Summary
 
 Innie is an open-source sidekick layer that sits between users and agent
-harnesses. It provides the product shell around agent execution: triggers,
-task lifecycle, memory contracts, policy, approvals, audit, schedules, and
-Slack-style collaboration. It delegates the inner agent loop to existing
-harnesses such as Codex, Claude Code, OpenCode, Goose, or future runtimes.
+harnesses. The human is the outie; the Slack bot is the innie for a software
+system; the harness does the work behind that boundary. Innie provides the
+product shell around agent execution: triggers, task lifecycle, memory
+contracts, policy, approvals, audit, schedules, and Slack-native collaboration.
+It delegates the inner agent loop to existing harnesses such as Codex, Claude
+Code, OpenCode, Goose, or future runtimes.
 
 The guiding principle is:
 
@@ -18,6 +20,8 @@ The guiding principle is:
 - Support multiple harnesses through small adapters.
 - Make chat-triggered and scheduled agent work observable, resumable, and
   auditable.
+- Treat Slack as the v0 outie interface: the human-facing place where users
+  ask, approve, interrupt, and receive work.
 - Keep durable memory and task state portable through simple file-backed
   conventions.
 - Enforce policy and approval boundaries outside the harness.
@@ -38,7 +42,7 @@ The guiding principle is:
 
 ```text
 User
-  Slack / CLI / Web / GitHub / cron
+  Slack (v0 outie interface) / CLI / Web / GitHub / cron
     |
 Innie
   routing, policy, memory, approvals, audit, schedules
@@ -121,10 +125,29 @@ export type HarnessCapabilities = {
 
 ## Initial Interfaces
 
+### Slack
+
+Slack is the v0 outie interface. It is where humans interact with the innie:
+they ask for work, approve sensitive actions, interrupt running tasks, and
+receive results. Other interfaces should be possible later, but the first
+product experience should prove that every software system can have a useful
+Slack-native work self.
+
+Expected behavior:
+
+- A DM or mention creates a task.
+- The task streams progress back to the thread.
+- Users can ask for status or cancel a task.
+- Risky actions ask for approval in-thread.
+- Team installs can restrict channels and allowed users.
+- Each installed bot represents the innie for a specific user, team, repo,
+  service, or software system.
+
 ### CLI
 
-The CLI is the first interface because it is easy to test and does not require
-hosting.
+The CLI is the first developer and admin interface. It should exist in v0 for
+local testing, setup, debugging, and automation, but it is not the primary
+outie experience.
 
 Example commands:
 
@@ -135,18 +158,6 @@ innie logs <task-id>
 innie cancel <task-id>
 innie approve <approval-id>
 ```
-
-### Slack
-
-Slack should be the first collaborative interface after the CLI.
-
-Expected behavior:
-
-- A DM or mention creates a task.
-- The task streams progress back to the thread.
-- Users can ask for status or cancel a task.
-- Risky actions ask for approval in-thread.
-- Team installs can restrict channels and allowed users.
 
 ## Memory Layout
 
@@ -208,12 +219,15 @@ guardrail.
 
 ## MVP Milestones
 
-### Milestone 1: Local Task Runner
+### Milestone 1: Slack Outie Interface
 
 - Initialize a local `.innie/` workspace.
-- Run a task through one harness adapter.
+- Connect a Slack app to an Innie workspace.
+- Route DMs and mentions into tasks.
+- Stream progress and final output to Slack threads.
+- Support status, cancel, and approval interactions.
 - Persist request, events, artifacts, and final status.
-- Provide `run`, `status`, `logs`, and `cancel` CLI commands.
+- Provide minimal CLI commands for setup, debugging, and local task inspection.
 
 ### Milestone 2: Codex And Claude Code Adapters
 
@@ -229,12 +243,12 @@ guardrail.
 - Pause tasks for approval-required actions.
 - Persist approval decisions in the audit log.
 
-### Milestone 4: Slack Sidekick
+### Milestone 4: Multi-Innie Installs
 
-- Add a Slack bot interface.
-- Route DMs and mentions into tasks.
-- Stream progress and final output to Slack threads.
-- Support status, cancel, and approval interactions.
+- Support more than one innie in the same Slack workspace.
+- Scope an innie to a user, team, repo, service, or software system.
+- Keep memory, policy, audit, and secrets isolated per innie.
+- Make the install identity obvious in Slack messages and audit records.
 
 ### Milestone 5: Scheduled Work And Memory
 
@@ -253,13 +267,14 @@ guardrail.
   OpenCode, and Goose?
 - How much policy can be enforced generically before sandbox integration is
   required?
-- Should Slack be built into the core or shipped as the first official plugin?
+- Which Slack surface should define the v0 experience: DM-first, channel
+  mention-first, or both from day one?
 
 ## Recommended First Build
 
-Start with a TypeScript CLI and file-backed task store. Implement one adapter
+Start with a Slack-first TypeScript service and a file-backed task store.
+Implement the CLI only as the setup and debugging path. Add one harness adapter
 first, then add the second adapter only after the event schema survives real
-task execution. Keep Slack out of the first commit path; add it once local task
-lifecycle and audit logs are boring.
+Slack-triggered task execution.
 
 This keeps Innie honest: a thin control layer, not a new agent framework.
