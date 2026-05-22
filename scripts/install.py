@@ -9,6 +9,12 @@ import subprocess
 import sys
 
 
+RUNTIME_DEPENDENCIES = {
+    "slack_sdk": "slack-sdk",
+    "aiohttp": "aiohttp",
+}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install the innie command for this checkout.")
     parser.add_argument(
@@ -24,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    _ensure_runtime_dependencies()
     _ensure_rich(assume_yes=args.yes)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -38,6 +45,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Add this directory to PATH if needed: {args.bin_dir}")
     print("Start with: innie init")
     return 0
+
+
+def _ensure_runtime_dependencies() -> None:
+    missing = [
+        package
+        for module_name, package in RUNTIME_DEPENDENCIES.items()
+        if importlib.util.find_spec(module_name) is None
+    ]
+    if not missing:
+        print("Runtime dependencies: available")
+        return
+
+    print(f"Runtime dependencies: missing {', '.join(missing)}")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--user", *missing],
+        check=True,
+    )
+    print("Installed runtime dependencies")
 
 
 def _ensure_rich(*, assume_yes: bool) -> None:

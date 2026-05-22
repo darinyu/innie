@@ -6,10 +6,19 @@ import tempfile
 import unittest
 
 from innie.db import connect, initialize_schema
+from innie.harness import HarnessEvent, ScriptedHarnessAdapter
 from innie.inbox import enqueue_trigger
 from innie.runtime import SessionManager
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
+
+
+class FakeSlackReplies:
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, str, str]] = []
+
+    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
+        self.messages.append((channel, thread_ts, text))
 
 
 def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1") -> SlackTrigger:
@@ -33,12 +42,21 @@ class RuntimeTest(unittest.TestCase):
             initialize_schema(db)
             for item in (make_trigger("Ev1", "D1", "100.1"), make_trigger("Ev2", "D2", "200.1")):
                 persist_trigger(db, item)
-                session = resolve_session_for_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="scripted")
                 enqueue_trigger(db, session=session, trigger=item)
             db.commit()
             db.close()
 
-            manager = SessionManager(path)
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="started"),
+                    HarnessEvent(type="progress", message="working"),
+                    HarnessEvent(type="output", message="done"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
             try:
                 asyncio.run(manager.run_until_idle())
                 statuses = [row["status"] for row in manager.db.execute("SELECT status FROM sessions ORDER BY id")]
@@ -50,7 +68,9 @@ class RuntimeTest(unittest.TestCase):
                 manager.close()
 
             self.assertEqual(["idle", "idle"], statuses)
-            self.assertEqual(2, events.count("harness.placeholder.output"))
+            self.assertEqual(2, events.count("harness.output"))
+            self.assertIn(("D1", "100.1", "Progress: working"), slack.messages)
+            self.assertIn(("D2", "200.1", "Done:\ndone"), slack.messages)
 
     def test_manager_rehydrates_running_session_after_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,13 +79,20 @@ class RuntimeTest(unittest.TestCase):
             initialize_schema(db)
             item = make_trigger("Ev1")
             persist_trigger(db, item)
-            session = resolve_session_for_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
             enqueue_trigger(db, session=session, trigger=item)
             db.execute("UPDATE sessions SET status = 'running' WHERE id = ?", (session.id,))
             db.commit()
             db.close()
 
-            manager = SessionManager(path)
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="started"),
+                    HarnessEvent(type="output", message="done"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, workspace=Path(tmp))
             try:
                 self.assertEqual([session.id], manager.hydrate())
                 asyncio.run(manager.run_until_idle())

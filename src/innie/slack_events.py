@@ -31,6 +31,7 @@ def normalize_slack_event(
     bot_user_id: str,
     watched_user_id: str | None = None,
     seen_event_ids: set[str] | None = None,
+    known_thread_roots: set[tuple[str, str]] | None = None,
 ) -> SlackEventDecision:
     event_id = str(payload.get("event_id") or "")
     if not event_id:
@@ -55,7 +56,15 @@ def normalize_slack_event(
     if not channel_id or not message_ts:
         return SlackEventDecision(False, "missing_channel_or_ts")
 
-    if event_type == "app_mention":
+    thread_root = str(thread_ts) if thread_ts else None
+    if (
+        event_type == "message"
+        and thread_root
+        and known_thread_roots is not None
+        and (channel_id, thread_root) in known_thread_roots
+    ):
+        trigger_type = "thread_reply"
+    elif event_type == "app_mention":
         trigger_type = "app_mention"
     elif event_type == "message" and event.get("channel_type") == "im":
         trigger_type = "dm"
