@@ -13,29 +13,26 @@ and observable while the harness does the actual agent work.
 
 ## What Is Innie And Why?
 
-Innie is a Slack-first sidekick runtime for AI coding agents and software
-automation agents. It runs in your dev environment, local or cloud, so the
+Innie is a **Slack-first sidekick runtime** for AI coding agents and software
+automation agents. It runs in **your dev environment**, local or cloud, so the
 agent can use the same repo, tools, skills, MCPs, credentials, and workspace
-access that you already use with the underlying harness.
+access you already use.
 
-The bet is simple: harness tools will keep getting better. Codex, Claude Code,
-OpenCode, Goose, and future harnesses should own planning, coding, tool use,
-permissions, and model behavior. Innie should own the small product shell around
-them:
+The bet: **harnesses keep getting better**. Codex, Claude Code, OpenCode,
+Goose, and future tools should own planning, coding, permissions, and model
+behavior. Innie owns the **thin product shell** around them:
 
-- Slack trigger in, Slack reply out.
-- Easy harness switching through a thin adapter boundary.
-- Your environment, your access: the agent can do what the selected harness can
-  do in that workspace.
-- Durable sessions, queued follow-ups, and restart recovery.
-- Visible progress without exposing private chain-of-thought.
-- Local schedules for recurring work.
-- Observability for task history, failures, usage, and health.
-- Hooks and harness adapters so teams can customize behavior without forking the
-  runtime.
+- **Slack in, Slack out**: trigger work from Slack and get replies back in the
+  thread.
+- **Harness-neutral**: switch between Codex CLI, Claude Code, OpenCode, Goose,
+  or future harnesses through adapters.
+- **Your environment, your access**: the agent can do what the selected harness
+  can do in that workspace.
+- **Durable and visible**: sessions, queued follow-ups, progress, schedules,
+  recovery, and observability.
 
 Innie is not a new agent loop, policy engine, or semantic memory system. It is
-the minimum layer that makes an agent harness feel like a dependable worker.
+the minimum layer that makes a harness feel like a dependable worker.
 
 ## How It Works
 
@@ -84,9 +81,6 @@ Planned runtime dependencies:
   OpenCode, or Goose.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
   environment.
-
-Current repo assets have no runtime dependency. The demo GIF generator uses
-Python and Pillow.
 
 ## Contribute
 
