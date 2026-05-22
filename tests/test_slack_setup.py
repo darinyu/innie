@@ -82,7 +82,7 @@ class SlackSetupTest(unittest.TestCase):
             self.assertEqual(0o600, mode)
             prompt_text = "\n".join(prompts)
             self.assertIn("Step 1/6", prompt_text)
-            self.assertIn("You can change these later", prompt_text)
+            self.assertIn("modifiable in the future", prompt_text)
             self.assertIn("Mode 1", prompt_text)
             self.assertIn("Mode 2", prompt_text)
             self.assertIn("Client ID", prompt_text)

@@ -150,13 +150,10 @@ def run_slack_setup(
         ]
     )
     app_name = prompt(
-        "Step 1/6 - Name the Slack app (1 minute). "
-        "Default is `innie`; you can change these later in Slack app settings. "
+        "Step 1/6 - Name the Slack app (1 minute), modifiable in the future.\n"
         "Slack app name [innie]: "
     ).strip() or "innie"
     display_name = prompt(
-        "Step 1/6 - Bot display name shown in Slack. "
-        "Default is `Innie`; You can change these later in Slack app settings. "
         "Bot display name [Innie]: "
     ).strip() or "Innie"
     trigger_mode_choice = prompt(
