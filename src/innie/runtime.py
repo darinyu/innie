@@ -25,7 +25,8 @@ class SessionActor:
         while not self._cancel_requested:
             row = claim_next_inbox_row(self._db, self.session_id)
             if row is None:
-                _set_session_status(self._db, self.session_id, "idle")
+                if _session_status(self._db, self.session_id) != "canceled":
+                    _set_session_status(self._db, self.session_id, "idle")
                 self._db.commit()
                 return
 
@@ -101,6 +102,11 @@ def _set_session_status(db: sqlite3.Connection, session_id: str, status: str) ->
         """,
         (status, session_id),
     )
+
+
+def _session_status(db: sqlite3.Connection, session_id: str) -> str:
+    row = db.execute("SELECT status FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return "" if row is None else row["status"]
 
 
 def _append_event(db: sqlite3.Connection, session_id: str, event_type: str, payload: dict) -> None:
