@@ -286,6 +286,8 @@ def run_slack_setup(
     )
     messages.append("Saved Slack tokens with restrictive file permissions.")
     messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
+    messages.append("Next: run `innie status <session-id>` or `innie logs <session-id>` after sessions exist.")
+    messages.append("Live Slack listening will be available when `innie run` lands in the next milestone.")
     return SlackSetupResult(ok=True, messages=messages)
 
 
