@@ -151,25 +151,25 @@ def frame(idx: int, total: int) -> Image.Image:
     phone_on = phase < 0.24 or phase > 0.82
     env_on = 0.16 < phase < 0.88
     resources_on = 0.32 < phase < 0.82
-    work_on = 0.48 < phase < 0.86
+    work_on = 0.60 < phase < 0.88
 
     phone(draw, phone_on)
     dev_environment(draw, env_on, resources_on)
-    code_panel(draw, work_on, max(0, min(1, (phase - 0.46) / 0.32)))
+    code_panel(draw, work_on, max(0, min(1, (phase - 0.64) / 0.22)))
 
     arrow(draw, (210, 250), (304, 250), CYAN if 0.12 < phase < 0.34 else LINE, 4)
     arrow(draw, (562, 252), (600, 252), GREEN if 0.32 < phase < 0.62 else LINE, 4)
-    arrow(draw, (600, 345), (562, 372), GREEN if 0.48 < phase < 0.76 else LINE, 4)
+    arrow(draw, (600, 345), (562, 372), GREEN if 0.52 < phase < 0.66 else LINE, 4)
     arrow(draw, (330, 382), (210, 320), BLUE if phase > 0.78 else LINE, 4)
 
     if 0.08 < phase < 0.30:
         p = (phase - 0.08) / 0.22
         active(draw, (210 + 94 * p, 250), p, CYAN)
-    elif 0.32 < phase < 0.56:
-        p = (phase - 0.32) / 0.24
+    elif 0.32 < phase < 0.50:
+        p = (phase - 0.32) / 0.18
         active(draw, (562 + 38 * p, 252), p, GREEN)
-    elif 0.58 < phase < 0.80:
-        p = (phase - 0.58) / 0.22
+    elif 0.52 < phase < 0.64:
+        p = (phase - 0.52) / 0.12
         active(draw, (600 - 38 * p, 345 + 27 * p), p, GREEN)
     elif phase > 0.80:
         p = min(1, (phase - 0.80) / 0.18)
@@ -180,7 +180,7 @@ def frame(idx: int, total: int) -> Image.Image:
         caption = "Innie starts in your dev environment"
     if phase > 0.40:
         caption = "Skills and MCPs expose the same workspace resources"
-    if phase > 0.58:
+    if phase > 0.64:
         caption = "Agent triages the issue and writes code"
     if phase > 0.82:
         caption = "Result is returned to the Slack thread"
