@@ -71,11 +71,11 @@ def initialize_schema(db: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
             hook_name TEXT NOT NULL,
+            dedupe_key TEXT UNIQUE,
             status TEXT NOT NULL,
             duration_ms INTEGER NOT NULL DEFAULT 0,
             payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-            UNIQUE(session_id, hook_name, payload_json)
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
 
         CREATE TABLE IF NOT EXISTS artifacts (

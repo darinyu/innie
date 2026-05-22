@@ -62,6 +62,19 @@ class SlackApi:
         return result
 
 
+class SlackWebClient:
+    def __init__(self, api: SlackApi, token: str) -> None:
+        self._api = api
+        self._token = token
+
+    def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
+        self._api.post_json(
+            "reactions.add",
+            self._token,
+            {"channel": channel, "timestamp": timestamp, "name": name},
+        )
+
+
 def build_manifest(
     *,
     app_name: str,
