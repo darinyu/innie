@@ -255,8 +255,10 @@ def run_slack_setup(
     ui.step(
         "Step 6/6",
         "Create Socket Mode token",
-        "In Basic Information -> App-Level Tokens, click Generate Token and Scopes. "
-        "Add connections:write. About 4 clicks.",
+        "In Basic Information -> App-Level Tokens, click Generate Token and Scopes.\n"
+        "Name the token `socket`.\n"
+        "Add scope: `connections:write`.\n"
+        "About 4 clicks.",
     )
     try:
         xapp_token = _prompt_xapp_token(prompt_secret, output)
