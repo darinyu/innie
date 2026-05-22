@@ -52,7 +52,7 @@ class CliRunTest(unittest.TestCase):
             self.assertEqual(0, code)
             output = stdout.getvalue()
             self.assertIn("reaction D1 100.1 eyes", output)
-            self.assertIn("message D1 100.1 Done:\nhello from cli", output)
+            self.assertIn("message D1 100.1 hello from cli", output)
             self.assertIn("accepted new session", output)
             self.assertIn("logs:", output)
 

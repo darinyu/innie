@@ -16,10 +16,33 @@ class SlackProgressRendererTest(unittest.TestCase):
             renderer.render("task_1", HarnessEvent(type="progress", message="running tests")),
         )
         self.assertEqual(
-            "Done:\nship complete",
+            "ship complete",
             renderer.render("task_1", HarnessEvent(type="output", message="ship complete")),
         )
         self.assertIsNone(renderer.render("task_1", HarnessEvent(type="completed")))
+
+    def test_formats_markdown_for_slack_mrkdwn(self) -> None:
+        renderer = SlackProgressRenderer()
+
+        self.assertEqual(
+            "*Cost And Access*\nUse `innie run`.",
+            renderer.render("task_1", HarnessEvent(type="output", message="**Cost And Access**\nUse `innie run`.")),
+        )
+
+    def test_renders_tool_use_as_slack_progress_widget(self) -> None:
+        renderer = SlackProgressRenderer()
+
+        self.assertEqual(
+            "*Innie is searching the web*\n> pricing model",
+            renderer.render(
+                "task_1",
+                HarnessEvent(
+                    type="tool_use",
+                    message="pricing model",
+                    payload={"tool_name": "web_search"},
+                ),
+            ),
+        )
 
     def test_renders_usage_without_private_reasoning(self) -> None:
         renderer = SlackProgressRenderer()

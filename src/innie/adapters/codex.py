@@ -148,25 +148,79 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
         return HarnessEvent(type="output", message=str(message) if message else None, payload=payload)
     if event_type in {"item.completed", "response.output_item.done"}:
         item = payload.get("item") or payload.get("output_item") or payload
+        tool_event = _map_tool_item(item)
+        if tool_event is not None:
+            return tool_event
         if isinstance(item, dict) and (item.get("role") == "assistant" or item.get("type") in {"agent_message", "assistant_message", "message"}):
             message = _extract_text(item)
             if message:
                 return HarnessEvent(type="output", message=message, payload=payload)
-    if event_type in {"token_count", "usage"}:
+    if event_type in {"item.started", "response.output_item.added"}:
+        item = payload.get("item") or payload.get("output_item") or payload
+        tool_event = _map_tool_item(item)
+        if tool_event is not None:
+            return tool_event
+    if event_type in {"token_count", "usage", "turn.completed"}:
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else payload
         return HarnessEvent(
             type="usage",
             usage=TokenUsage(
-                input_tokens=int(payload.get("input_tokens", 0) or 0),
-                output_tokens=int(payload.get("output_tokens", 0) or 0),
-                cache_read_tokens=int(payload.get("cache_read_tokens", 0) or 0),
-                cache_write_tokens=int(payload.get("cache_write_tokens", 0) or 0),
-                cost_usd=payload.get("cost_usd"),
+                input_tokens=int(usage.get("input_tokens", 0) or usage.get("input", 0) or 0),
+                output_tokens=int(usage.get("output_tokens", 0) or usage.get("output", 0) or 0),
+                cache_read_tokens=int(usage.get("cache_read_tokens", 0) or usage.get("cache_read_input_tokens", 0) or 0),
+                cache_write_tokens=int(usage.get("cache_write_tokens", 0) or usage.get("cache_write_input_tokens", 0) or 0),
+                cost_usd=usage.get("cost_usd"),
             ),
             payload=payload,
         )
     if event_type == "session.finished":
         return None
     return None
+
+
+def _map_tool_item(item: Any) -> HarnessEvent | None:
+    if not isinstance(item, dict):
+        return None
+    item_type = str(item.get("type") or "")
+    tool_name = _normalize_tool_name(item_type or str(item.get("name") or "tool"))
+    if not _looks_like_tool(item_type, item):
+        return None
+    message = _tool_message(item)
+    event_type = "tool_result" if item.get("status") in {"completed", "success"} and _extract_text(item.get("output") or item.get("result")) else "tool_use"
+    return HarnessEvent(
+        type=event_type,
+        message=message or tool_name,
+        payload={"tool_name": tool_name, "item_type": item_type},
+    )
+
+
+def _looks_like_tool(item_type: str, item: dict[str, Any]) -> bool:
+    if item_type.endswith("_call") or item_type in {"function_call", "tool_call", "web_search_call"}:
+        return True
+    return "tool" in item or "name" in item and item.get("arguments") is not None
+
+
+def _normalize_tool_name(item_type: str) -> str:
+    if item_type == "web_search_call":
+        return "web_search"
+    if item_type.endswith("_call"):
+        return item_type[: -len("_call")]
+    return item_type or "tool"
+
+
+def _tool_message(item: dict[str, Any]) -> str | None:
+    for key in ("query", "command", "name", "tool", "message"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    arguments = item.get("arguments")
+    if isinstance(arguments, str):
+        return arguments
+    if isinstance(arguments, dict):
+        for key in ("query", "command", "path"):
+            if arguments.get(key):
+                return str(arguments[key])
+    return _extract_text(item.get("output") or item.get("result"))
 
 
 def _extract_text(value: Any) -> str | None:

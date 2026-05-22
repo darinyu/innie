@@ -44,7 +44,7 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual("echo", result.harness_id)
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
             self.assertIn("reaction D1 100.1 eyes", printed)
-            self.assertIn("message D1 100.1 Done:\nhello from slack", printed)
+            self.assertIn("message D1 100.1 hello from slack", printed)
 
     def test_run_once_payload_reports_rejected_event_without_running_adapter(self) -> None:
         ignored = payload(text="not for bot")
@@ -84,7 +84,7 @@ class RunnerTest(unittest.TestCase):
             )
 
             self.assertTrue(result.accepted)
-            self.assertIn("message D1 100.1 Done:\nhello from socket", printed)
+            self.assertIn("message D1 100.1 hello from socket", printed)
 
     def test_run_once_socket_ignores_self_echo_until_first_accepted_event(self) -> None:
         class FakeEventSource:
@@ -124,7 +124,7 @@ class RunnerTest(unittest.TestCase):
                 "ignored event: self_echo event_id=EvSelf type=message channel=C1 ts=99.1 user=U_BOT bot_id=B1 text=Task completed.",
                 printed,
             )
-            self.assertIn("message D1 100.1 Done:\nhello after self echo", printed)
+            self.assertIn("message D1 100.1 hello after self echo", printed)
 
     def test_run_forever_socket_processes_until_event_source_stops(self) -> None:
         class FakeEventSource:
@@ -153,8 +153,8 @@ class RunnerTest(unittest.TestCase):
             self.assertIn("waiting for Slack event #1", printed)
             self.assertIn("waiting for Slack event #2", printed)
             self.assertIn("stopped after 2 accepted event(s)", printed)
-            self.assertIn("message D1 100.1 Done:\nfirst", printed)
-            self.assertIn("message D1 100.2 Done:\nsecond", printed)
+            self.assertIn("message D1 100.1 first", printed)
+            self.assertIn("message D1 100.2 second", printed)
 
     def test_run_forever_socket_reports_existing_session_for_thread_reply(self) -> None:
         class FakeEventSource:

@@ -70,7 +70,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(["idle", "idle"], statuses)
             self.assertEqual(2, events.count("harness.output"))
             self.assertIn(("D1", "100.1", "Progress: working"), slack.messages)
-            self.assertIn(("D2", "200.1", "Done:\ndone"), slack.messages)
+            self.assertIn(("D2", "200.1", "done"), slack.messages)
 
     def test_manager_logs_task_started_to_terminal_not_slack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

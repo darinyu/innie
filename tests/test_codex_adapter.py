@@ -231,6 +231,82 @@ class CodexCliAdapterTest(unittest.TestCase):
 
         self.assertIn(("output", "hello from agent item"), events)
 
+    def test_maps_codex_web_search_item_to_tool_widget_event(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "item.started",
+                    "item": {
+                        "type": "web_search_call",
+                        "query": "pricing model",
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[HarnessEvent]:
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("tool_use", events[0].type)
+        self.assertEqual("pricing model", events[0].message)
+        self.assertEqual("web_search", events[0].payload["tool_name"])
+
+    def test_maps_turn_completed_usage(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 11,
+                        "output_tokens": 7,
+                        "cache_read_input_tokens": 5,
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[HarnessEvent]:
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("usage", events[0].type)
+        self.assertEqual(11, events[0].usage.input_tokens)
+        self.assertEqual(7, events[0].usage.output_tokens)
+        self.assertEqual(5, events[0].usage.cache_read_tokens)
+
     def test_verbose_logs_unknown_codex_event_without_streaming_private_reasoning(self) -> None:
         process = FakeProcess(
             [

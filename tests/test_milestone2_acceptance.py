@@ -79,7 +79,7 @@ class Milestone2AcceptanceTest(unittest.TestCase):
 
             self.assertIn(("D1", "100.1", "eyes"), slack.reactions)
             self.assertIn(("D1", "100.1", "Progress: checking repository"), slack.messages)
-            self.assertIn(("D1", "100.1", "Done:\nmilestone 2 complete"), slack.messages)
+            self.assertIn(("D1", "100.1", "milestone 2 complete"), slack.messages)
             self.assertIn("harness.usage", task_events)
             self.assertIn("harness.completed", task_events)
             self.assertEqual(1, artifact_count)
