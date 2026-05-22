@@ -196,7 +196,7 @@ def main() -> None:
         OUT,
         save_all=True,
         append_images=frames[1:],
-        duration=95,
+        duration=165,
         loop=0,
         optimize=True,
         disposal=2,
