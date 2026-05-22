@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from pathlib import Path
+import json
+import os
+
+
+def innie_dir(workspace: Path) -> Path:
+    return workspace.resolve() / ".innie"
+
+
+def secrets_path(workspace: Path) -> Path:
+    return innie_dir(workspace) / "secrets.json"
+
+
+def config_path(workspace: Path) -> Path:
+    return innie_dir(workspace) / "config.yaml"
+
+
+def load_secrets(workspace: Path) -> dict[str, str]:
+    path = secrets_path(workspace)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_secrets(workspace: Path, secrets: dict[str, str]) -> None:
+    path = secrets_path(workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(secrets, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def write_workspace_config(workspace: Path, *, app_id: str, bot_user_id: str, app_name: str) -> None:
+    path = config_path(workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing_harness = "null"
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("selected:"):
+                existing_harness = line.split(":", 1)[1].strip() or "null"
+                break
+    path.write_text(
+        "\n".join(
+            [
+                "# Innie local workspace config.",
+                "# Non-secret metadata belongs here. Tokens should be stored separately.",
+                "workspace_version: 1",
+                "slack:",
+                "  configured: true",
+                f"  app_id: {app_id}",
+                f"  bot_user_id: {bot_user_id}",
+                f"  app_name: {app_name}",
+                "harness:",
+                f"  selected: {existing_harness}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
