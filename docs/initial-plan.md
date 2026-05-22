@@ -820,21 +820,166 @@ events, and recover after restart.
 
 ### Milestone 1: Slack To Durable Session
 
-- Initialize a local `.innie/` workspace.
-- Provide a one-time Slack onboarding script.
-- Connect a Slack app to an Innie workspace.
-- Write Slack config to `.innie/config.yaml`.
-- Verify Slack auth by receiving or sending a test message.
-- Add the lifecycle hook runner and the default Slack `:eyes:` acknowledgment
-  hook for accepted Slack triggers.
-- Convert DMs and mentions into sessions and tasks for the single configured
-  innie.
+Goal: prove the smallest useful product loop before adding real harness work.
+A Slack DM or channel mention should become a durable session, acknowledge the
+user immediately, preserve follow-ups in order, and expose enough local state to
+debug what happened.
+
+Task 1: Local workspace bootstrap.
+
+- Goal: make every install self-contained and inspectable.
+- Build `innie init` to check local dependencies before creating runtime state:
+  Python 3.11+, SQLite 3, Slack configuration availability, and at least one
+  supported harness command such as Codex CLI, Claude Code, OpenCode, or Goose.
+- If a dependency is missing, explain what is missing and ask the user before
+  attempting any install, download, package-manager command, or config write.
+- Keep the dependency check shell-agnostic: use Python subprocess execution,
+  direct executable lookup, and structured prompts instead of shell-specific
+  snippets, aliases, profiles, or `source` instructions.
+- After dependencies are accepted or intentionally skipped, create `.innie/`,
+  `.innie/config.yaml`, `.innie/innie.db`, and `.innie/artifacts/`.
+- Initialize SQLite schema for sessions, task events, inbox rows, hook events,
+  and artifacts.
+- Done when a fresh clone can run one command and produce a valid local Innie
+  workspace, with clear dependency status and no dependency installation unless
+  the user explicitly approved it.
+
+Task 2: Slack app setup wizard.
+
+- Goal: make Slack onboarding convenient enough for a new user to complete
+  without reading Slack app docs.
+- Build `innie slack setup` as a guided wizard inspired by Aimee's setup flow,
+  but keep the implementation independent and open-source friendly.
+- Start by checking for existing Slack config and tokens. If complete config
+  exists, validate it with Slack `auth.test` and ask before refreshing or
+  replacing it.
+- Generate an Innie Slack app manifest from a minimal template:
+  - display name and app name chosen by the user.
+  - Socket Mode enabled.
+  - App Home messages enabled if needed for DMs.
+  - bot events for `app_mention`, `message.im`, and optionally
+    `message.channels` / `message.groups` when the user wants channel mention
+    support.
+  - bot scopes for receiving mentions/messages and posting replies/reactions,
+    starting with the smallest useful set.
+- Ask for a one-time Slack App Configuration token only if the user wants Innie
+  to create or update the app manifest automatically. Do not store this token.
+- If automatic app creation is enabled, call Slack manifest APIs to create the
+  app from the generated manifest. If not, print or write the manifest so the
+  user can paste it into Slack manually.
+- Run the Slack OAuth install flow with both local and cloud-friendly modes:
+  - local mode can start a callback server on a clearly documented localhost
+    port, check the port first, and ask before killing any process that occupies
+    it.
+  - cloud or remote-dev mode should not assume Slack can reach the machine
+    running Innie. If the user has a public callback URL, register and use it.
+    Otherwise, register a localhost redirect URL, show the authorization URL,
+    ask the user to complete it in their browser, and let them paste back the
+    final callback URL or the `code` query parameter from the browser.
+  - the wizard should explain exactly what to copy back, where to paste it, why
+    the callback page may fail to load in remote-dev mode, and how long the code
+    remains useful.
+- Exchange the OAuth code for a bot token. If user-token support is added later,
+  make it optional and explain why it is needed before requesting user scopes.
+- Guide the user through creating an app-level Socket Mode token with
+  `connections:write`. This may remain a manual Slack UI step; validate that the
+  pasted token has the expected `xapp-` shape before storing it.
+- Store bot and app-level tokens in a local secret store or files with
+  restrictive permissions. Store non-secret app metadata in `.innie/config.yaml`.
+- Validate the final setup before returning success:
+  - bot token passes `auth.test`.
+  - app-level token can open a Socket Mode connection.
+  - bot can post or react to a test message.
+  - configured events are received through Socket Mode.
+- Done when setup can confirm "bot can receive events" and "bot can send or
+  react" before the runtime starts, without requiring the user to manually
+  discover Slack scopes, event subscriptions, or token types.
+
+Task 3: Slack event intake.
+
+- Goal: turn Slack DMs and channel mentions into normalized triggers for the
+  single user-owned innie.
+- Support both direct messages and channel mentions from day one.
+- Ignore self-echoes, retries, unsupported event types, and messages not meant
+  for the configured innie.
+- Persist the accepted trigger before any visible response.
+- Done when test events produce deterministic trigger records and rejected
+  events explain why they were ignored.
+
+Task 4: Immediate Slack acknowledgment.
+
+- Goal: make the outie see that Innie started looking before any agent work
+  exists.
+- Add the minimal lifecycle hook runner.
+- Implement the default `trigger.accepted` hook that posts or reacts with
+  `:eyes:` at the Slack root message.
+- Record hook attempts, duration, and failures as observability events.
+- Done when every accepted Slack trigger gets one idempotent acknowledgment and
+  duplicate Slack retries do not create duplicate reactions or messages.
+
+Task 5: Durable session identity.
+
+- Goal: make Slack threads map to recoverable Innie sessions.
 - Create one durable session per Slack root message.
-- Preserve per-session ordering while allowing different sessions to run
-  concurrently.
-- Persist request, state transitions, queued input, events, artifacts, and
-  final status durably.
-- Provide minimal CLI commands for setup, debugging, and local task inspection.
+- Map replies in an existing Innie thread back to the same session.
+- Store Slack channel id, root/thread ts, trigger type, output target, status,
+  timestamps, and configured harness id.
+- Done when the same Slack thread always resolves to the same session after
+  process restart.
+
+Task 6: Durable inbox and ordering.
+
+- Goal: make concurrent Slack activity safe before any real harness adapter is
+  added.
+- Persist every accepted message into `session_inbox` before handing it to an
+  in-memory actor.
+- Preserve ordering within one session while allowing different sessions to be
+  active concurrently.
+- Keep busy-session follow-ups queued instead of starting a second turn.
+- Done when two Slack threads can progress independently and two messages in the
+  same thread are processed in stored order.
+
+Task 7: Session actor skeleton.
+
+- Goal: establish the asyncio concurrency shape without depending on Codex,
+  Claude Code, or any external harness.
+- Add one manager task and one live actor per hydrated session.
+- Actors should read durable inbox rows, transition session state, append task
+  events, and emit placeholder output.
+- The runtime registry is only a reconstructable cache; SQLite remains the
+  source of truth.
+- Done when killing and restarting the process can rehydrate non-terminal
+  sessions and continue from the stored inbox.
+
+Task 8: Minimal Slack status and cancel.
+
+- Goal: give the outie basic control over a session even before full harness
+  execution exists.
+- Support status requests that summarize session state, queued inputs, last
+  event, and output target.
+- Support cancel requests that mark the session or current placeholder task as
+  canceled and stop the live actor safely.
+- Done when a user can ask "status" or "cancel" in the Slack thread and see a
+  deterministic response backed by SQLite state.
+
+Task 9: Local inspection CLI.
+
+- Goal: make development and debugging possible without a web console.
+- Provide minimal commands: `innie status <session-id>`,
+  `innie logs <session-id>`, and `innie cancel <session-id>`.
+- Read from SQLite and display session state, inbox rows, task events, hook
+  events, and latest output target.
+- Done when a developer can debug a Slack-triggered session entirely from local
+  CLI output.
+
+Task 10: Milestone 1 acceptance test.
+
+- Goal: prove the Slack-to-durable-session loop end to end.
+- Use a fake Slack event fixture and a local SQLite database.
+- Verify accepted trigger persistence, `:eyes:` acknowledgment hook execution,
+  session creation, inbox ordering, placeholder task events, status, cancel, and
+  restart rehydration.
+- Done when the test passes without network access or a real harness.
 
 ### Milestone 2: One Harness Adapter And Progress
 
