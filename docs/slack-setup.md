@@ -45,7 +45,7 @@ bot.
 Mode 2 is for personal triage:
 
 ```text
-Respond when someone tags you, like @Darin.
+Respond when someone tags you, like @<username>.
 ```
 
 Use this when you want Innie to help with messages directed at you. This mode

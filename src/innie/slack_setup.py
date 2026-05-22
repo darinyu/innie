@@ -159,7 +159,7 @@ def run_slack_setup(
     trigger_mode_choice = prompt(
         "Step 2/6 - Choose when Innie should respond.\n"
         "  Mode 1: respond when someone tags the bot, like @Innie.\n"
-        "  Mode 2: respond when someone tags you, like @Darin, in channels where the app is present.\n"
+        "  Mode 2: respond when someone tags you, like @<username>, in channels where the app is present.\n"
         "Choose Mode 1 or Mode 2 [1]: "
     ).strip() or "1"
     trigger_mode = "user_mention" if trigger_mode_choice == "2" else "bot_mention"
