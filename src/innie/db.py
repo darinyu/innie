@@ -28,6 +28,20 @@ def initialize_schema(db: sqlite3.Connection) -> None:
             UNIQUE(slack_channel_id, slack_root_ts)
         );
 
+        CREATE TABLE IF NOT EXISTS slack_triggers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slack_event_id TEXT NOT NULL UNIQUE,
+            trigger_type TEXT NOT NULL,
+            slack_channel_id TEXT NOT NULL,
+            slack_message_ts TEXT NOT NULL,
+            slack_thread_ts TEXT,
+            sender_user_id TEXT,
+            text TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'accepted',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
         CREATE TABLE IF NOT EXISTS session_inbox (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
