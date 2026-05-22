@@ -24,7 +24,12 @@ class FakeSlackApi:
     def post_form(self, method: str, payload: dict[str, str]) -> dict:
         self.calls.append((method, None, payload))
         if method == "oauth.v2.access":
-            return {"ok": True, "access_token": "xoxb-token", "app_id": "A123"}
+            return {
+                "ok": True,
+                "access_token": "xoxb-token",
+                "app_id": "A123",
+                "authed_user": {"id": "U_INSTALLER"},
+            }
         raise AssertionError(f"unexpected form method {method}")
 
 
@@ -46,6 +51,7 @@ class SlackSetupTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             prompts: list[str] = []
+            outputs: list[str] = []
             answers = iter(
                 [
                     "",
@@ -65,6 +71,7 @@ class SlackSetupTest(unittest.TestCase):
                 api=FakeSlackApi(),
                 prompt=lambda text: prompts.append(text) or next(answers),
                 prompt_secret=lambda text: prompts.append(text) or next(answers),
+                output=outputs.append,
                 oauth_timeout_seconds=0,
             )
 
@@ -89,6 +96,10 @@ class SlackSetupTest(unittest.TestCase):
             self.assertIn("Client Secret", prompt_text)
             self.assertIn("App ID", prompt_text)
             self.assertNotIn("OAuth callback mode", prompt_text)
+            output_text = "\n".join(outputs)
+            self.assertIn("https://api.slack.com/apps", output_text)
+            self.assertIn('"display_information"', output_text)
+            self.assertIn("\033[2J\033[H", output_text)
 
     def test_user_mention_mode_adds_channel_message_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,7 +109,6 @@ class SlackSetupTest(unittest.TestCase):
                     "support-innie",
                     "Support Innie",
                     "2",
-                    "U_DARIN",
                     "",
                     "client-id",
                     "client-secret",
@@ -113,6 +123,7 @@ class SlackSetupTest(unittest.TestCase):
                 api=FakeSlackApi(),
                 prompt=lambda _text: next(answers),
                 prompt_secret=lambda _text: next(answers),
+                output=lambda _text: None,
                 oauth_timeout_seconds=0,
             )
 
@@ -123,7 +134,7 @@ class SlackSetupTest(unittest.TestCase):
             self.assertIn("message.groups", events)
             config = (workspace / ".innie" / "config.yaml").read_text()
             self.assertIn("trigger_mode: user_mention", config)
-            self.assertIn("watched_user_id: U_DARIN", config)
+            self.assertIn("watched_user_id: U_INSTALLER", config)
 
 
 if __name__ == "__main__":

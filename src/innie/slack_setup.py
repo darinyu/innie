@@ -15,6 +15,7 @@ from .config import load_secrets, write_secrets, write_workspace_config
 
 PromptFn = Callable[[str], str]
 SecretPromptFn = Callable[[str], str]
+OutputFn = Callable[[str], None]
 
 
 BOT_SCOPES = [
@@ -124,6 +125,7 @@ def run_slack_setup(
     prompt: PromptFn = input,
     prompt_secret: SecretPromptFn | None = None,
     open_url: Callable[[str], None] | None = None,
+    output: OutputFn = print,
     oauth_timeout_seconds: int = 120,
 ) -> SlackSetupResult:
     api = api or SlackApi()
@@ -165,10 +167,7 @@ def run_slack_setup(
     trigger_mode = "user_mention" if trigger_mode_choice == "2" else "bot_mention"
     watched_user_id = None
     if trigger_mode == "user_mention":
-        watched_user_id = prompt(
-            "Step 2/6 - Copy your Slack member ID (profile -> three dots -> Copy member ID, about 3 clicks). "
-            "Your member ID, usually starts with U: "
-        ).strip()
+        messages.append("Mode 2 selected. Innie will use the installing Slack user ID returned by OAuth.")
     include_channel_messages = trigger_mode == "user_mention"
     redirect_url = _resolve_redirect_url(prompt, messages)
     manifest = build_manifest(
@@ -180,19 +179,37 @@ def run_slack_setup(
 
     manifest_path = workspace / ".innie" / "slack-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_json = json.dumps(manifest, indent=2, sort_keys=True)
+    manifest_path.write_text(manifest_json + "\n", encoding="utf-8")
     messages.append(f"Step 3/6 - Wrote Slack manifest for manual paste: {manifest_path}")
     messages.append(
         "In Slack API: Create New App -> From an app manifest -> paste this file. "
         "This is usually 6 clicks and 2-3 minutes."
     )
+    output(
+        "\n".join(
+            [
+                "",
+                "Step 3/6 - Create the Slack app from the manifest.",
+                "Open: https://api.slack.com/apps",
+                "Click: Create New App -> From an app manifest -> select your workspace.",
+                "Paste this manifest:",
+                "",
+                manifest_json,
+                "",
+            ]
+        )
+    )
     prompt(
         "Step 3/6 - Create the Slack app from the generated manifest.\n"
         f"  Manifest file: {manifest_path}\n"
-        "  In Slack API: Create New App -> From an app manifest -> paste this file.\n"
+        "  Open https://api.slack.com/apps\n"
+        "  Click Create New App -> From an app manifest -> select your workspace.\n"
+        "  Paste the manifest printed above.\n"
         "  This is usually 6 clicks and 2-3 minutes.\n"
         "Press Enter after the Slack app is created from the manifest."
     )
+    _clear_terminal(output)
 
     client_id = prompt(
         "Step 4/6 - In Slack API, open Basic Information -> App Credentials "
@@ -227,6 +244,17 @@ def run_slack_setup(
         return SlackSetupResult(ok=False, messages=messages + ["OAuth did not return an xoxb- bot token."])
 
     app_id = oauth_result.get("app_id") or app_id
+    if trigger_mode == "user_mention":
+        watched_user_id = (oauth_result.get("authed_user") or {}).get("id")
+        if not watched_user_id:
+            return SlackSetupResult(
+                ok=False,
+                messages=messages
+                + [
+                    "Mode 2 needs Slack to return the installing user ID from OAuth, but it was missing.",
+                    "Run setup again with Mode 1, or report this OAuth response shape as a bug.",
+                ],
+            )
     auth = api.post_json("auth.test", bot_token, {})
     bot_user_id = auth.get("user_id", "")
 
@@ -357,3 +385,7 @@ def _oauth_url(client_id: str, scopes: list[str], redirect_url: str) -> str:
 def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         return sock.connect_ex(("localhost", port)) == 0
+
+
+def _clear_terminal(output: OutputFn) -> None:
+    output("\033[2J\033[H")

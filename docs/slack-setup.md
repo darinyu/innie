@@ -49,38 +49,31 @@ Respond when someone tags you, like @<username>.
 ```
 
 Use this when you want Innie to help with messages directed at you. This mode
-requires channel/group message events, and Innie filters locally for your Slack
-member ID.
-
-To find your Slack member ID:
-
-```text
-Profile -> three dots -> Copy member ID
-```
+requires channel/group message events. Innie uses the installing Slack user ID
+returned by OAuth so you do not need to copy your member ID during normal setup.
 
 Screenshot placeholder:
 
 ```text
-[screenshot: Slack profile menu with Copy member ID]
+[screenshot: trigger mode selection in Innie terminal]
 ```
 
 ## Step 3/6: Create The Slack App From Manifest
 
 Time: 2-3 minutes, about 6 clicks.
 
-Innie writes:
-
-```text
-.innie/slack-manifest.json
-```
+Innie prints the manifest directly in the terminal and also writes it to
+`.innie/slack-manifest.json`.
 
 In Slack API:
 
 ```text
-Create New App -> From an app manifest -> select workspace -> paste manifest
+Open https://api.slack.com/apps
+Click Create New App -> From an app manifest -> select workspace -> paste manifest
 ```
 
-After Slack creates the app, return to the terminal and press Enter.
+After you copy the manifest, return to the terminal and press Enter. Innie clears
+the manifest from the terminal and moves to the next step.
 
 Screenshot placeholders:
 
