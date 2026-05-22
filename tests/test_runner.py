@@ -46,6 +46,24 @@ class RunnerTest(unittest.TestCase):
             self.assertIn("reaction D1 100.1 eyes", printed)
             self.assertIn("message D1 100.1 hello from slack", printed)
 
+    def test_run_once_payload_verbose_logs_session_before_harness_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            printed: list[str] = []
+            slack = ConsoleSlackClient(output=lambda _line: None)
+
+            result = run_once_payload(
+                Path(tmp),
+                payload(),
+                harness_id="echo",
+                bot_user_id="U_BOT",
+                slack=slack,
+                verbose=True,
+                output=printed.append,
+            )
+
+            self.assertIn(f"accepted new session {result.session_id} via echo", printed)
+            self.assertTrue(any(f"session {result.session_id} task " in line for line in printed))
+
     def test_run_once_payload_reports_rejected_event_without_running_adapter(self) -> None:
         ignored = payload(text="not for bot")
         ignored["event"]["channel_type"] = "channel"

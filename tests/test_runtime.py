@@ -104,8 +104,8 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(1, started_count)
             self.assertNotIn(("D1", "100.1", f"Started task {task_id}."), slack.messages)
-            self.assertIn(f"task {task_id} started", terminal)
-            self.assertIn(f"task {task_id} completed", terminal)
+            self.assertIn(f"session {session.id} task {task_id} started", terminal)
+            self.assertIn(f"session {session.id} task {task_id} completed", terminal)
 
     def test_manager_does_not_duplicate_adapter_started_terminal_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

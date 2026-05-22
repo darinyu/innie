@@ -140,9 +140,9 @@ class SessionActor:
         if self._event_output is None:
             return
         if event.type == "started":
-            self._event_output(f"task {task_id} started")
+            self._event_output(f"session {self.session_id} task {task_id} started")
         elif event.type == "completed":
-            self._event_output(f"task {task_id} completed")
+            self._event_output(f"session {self.session_id} task {task_id} completed")
 
 
 class SessionManager:

@@ -290,6 +290,16 @@ async def process_payload(
     if not accepted.decision.accepted or accepted.session is None:
         return RunOnceResult(False, accepted.decision.reason, payload=payload)
     session_status = "existing" if existing_session_id == accepted.session.id else "new"
+    result = RunOnceResult(
+        True,
+        accepted.decision.reason,
+        accepted.session.id,
+        payload=payload,
+        session_status=session_status,
+        harness_id=accepted.session.harness_id,
+    )
+    if verbose and output is not None:
+        output(format_run_acceptance(result))
 
     manager = SessionManager(
         db_path,
@@ -302,14 +312,7 @@ async def process_payload(
         await manager.run_until_idle()
     finally:
         manager.close()
-    return RunOnceResult(
-        True,
-        accepted.decision.reason,
-        accepted.session.id,
-        payload=payload,
-        session_status=session_status,
-        harness_id=accepted.session.harness_id,
-    )
+    return result
 
 
 def format_run_acceptance(result: RunOnceResult) -> str:
