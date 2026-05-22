@@ -3,10 +3,11 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 from pathlib import Path
+import types
 import unittest
 from unittest import mock
 
-from innie.bootstrap import init_workspace
+from innie.bootstrap import check_dependencies, init_workspace
 
 
 class BootstrapTest(unittest.TestCase):
@@ -44,6 +45,15 @@ class BootstrapTest(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertFalse((workspace / ".innie").exists())
+
+    def test_python_310_is_supported(self) -> None:
+        fake_version = types.SimpleNamespace(major=3, minor=10, micro=13)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("innie.bootstrap.sys.version_info", fake_version):
+                statuses = check_dependencies(Path(tmp))
+
+        python = next(status for status in statuses if status.name == "python")
+        self.assertTrue(python.ok)
 
 
 if __name__ == "__main__":

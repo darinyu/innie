@@ -12,6 +12,7 @@ from .db import connect, initialize_schema
 
 
 SUPPORTED_HARNESSES = ("codex", "claude", "opencode", "goose")
+MIN_PYTHON = (3, 10)
 CONFIG_TEMPLATE = """# Innie local workspace config.
 # Non-secret metadata belongs here. Tokens should be stored separately.
 workspace_version: 1
@@ -38,10 +39,11 @@ class InitResult:
 
 def check_dependencies(workspace: Path) -> list[DependencyStatus]:
     statuses: list[DependencyStatus] = []
+    python_version = (sys.version_info.major, sys.version_info.minor)
     statuses.append(
         DependencyStatus(
             name="python",
-            ok=sys.version_info >= (3, 11),
+            ok=python_version >= MIN_PYTHON,
             detail=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
             required=True,
         )

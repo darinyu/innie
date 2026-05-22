@@ -73,7 +73,7 @@ innie run
 
 Planned runtime dependencies:
 
-- Python 3.11+.
+- Python 3.10+.
 - SQLite 3 for local durable session state.
 - A Slack app for DM and channel mention triggers. Innie should provide a Slack
   app setup wizard through `innie slack setup`.

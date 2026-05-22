@@ -829,7 +829,7 @@ Task 1: Local workspace bootstrap.
 
 - Goal: make every install self-contained and inspectable.
 - Build `innie init` to check local dependencies before creating runtime state:
-  Python 3.11+, SQLite 3, Slack configuration availability, and at least one
+  Python 3.10+, SQLite 3, Slack configuration availability, and at least one
   supported harness command such as Codex CLI, Claude Code, OpenCode, or Goose.
 - If a dependency is missing, explain what is missing and ask the user before
   attempting any install, download, package-manager command, or config write.
