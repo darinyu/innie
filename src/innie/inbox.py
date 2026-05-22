@@ -13,7 +13,9 @@ class InboxRow:
     id: int
     session_id: str
     slack_event_id: str | None
+    slack_channel_id: str
     slack_message_ts: str
+    slack_thread_ts: str | None
     status: str
     text: str
 
@@ -110,7 +112,9 @@ def _to_inbox_row(row: sqlite3.Row) -> InboxRow:
         id=row["id"],
         session_id=row["session_id"],
         slack_event_id=row["slack_event_id"],
+        slack_channel_id=row["slack_channel_id"],
         slack_message_ts=row["slack_message_ts"],
+        slack_thread_ts=row["slack_thread_ts"],
         status=row["status"],
         text=row["text"],
     )

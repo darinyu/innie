@@ -63,9 +63,30 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS task_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+            task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
             event_type TEXT NOT NULL,
             payload_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'created',
+            goal TEXT NOT NULL,
+            output_target TEXT NOT NULL,
+            harness_id TEXT NOT NULL,
+            execution_mode TEXT NOT NULL DEFAULT 'autonomous',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS harness_capabilities (
+            harness_id TEXT PRIMARY KEY,
+            capabilities_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
 
         CREATE TABLE IF NOT EXISTS hook_events (
@@ -82,6 +103,7 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS artifacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+            task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
             path TEXT NOT NULL,
             metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -90,7 +112,34 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         """
     )
     _ensure_column(db, "slack_triggers", "session_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")
+    _ensure_column(db, "task_events", "task_id", "TEXT REFERENCES tasks(id) ON DELETE CASCADE")
+    _ensure_column(db, "artifacts", "task_id", "TEXT REFERENCES tasks(id) ON DELETE CASCADE")
+    _ensure_column(db, "artifacts", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(db, "hook_events", "dedupe_key", "TEXT")
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_tasks_session_created_at
+        ON tasks(session_id, created_at)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at
+        ON tasks(status, updated_at)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_task_events_task_created_at
+        ON task_events(task_id, created_at)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_artifacts_task_created_at
+        ON artifacts(task_id, created_at)
+        """
+    )
     db.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_hook_events_dedupe_key

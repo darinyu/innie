@@ -34,7 +34,7 @@ class InstallScriptTest(unittest.TestCase):
 
     def test_install_script_defaults_to_installing_rich(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
+            with mock.patch("scripts.install.importlib.util.find_spec", side_effect=_missing_only("rich")):
                 with mock.patch("builtins.input", return_value=""):
                     with mock.patch("scripts.install.subprocess.run") as run:
                         out = StringIO()
@@ -46,7 +46,7 @@ class InstallScriptTest(unittest.TestCase):
 
     def test_install_script_can_skip_rich(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
+            with mock.patch("scripts.install.importlib.util.find_spec", side_effect=_missing_only("rich")):
                 with mock.patch("builtins.input", return_value="n"):
                     with mock.patch("scripts.install.subprocess.run") as run:
                         out = StringIO()
@@ -58,7 +58,7 @@ class InstallScriptTest(unittest.TestCase):
 
     def test_install_script_can_install_rich_with_yes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
+            with mock.patch("scripts.install.importlib.util.find_spec", side_effect=_missing_only("rich")):
                 with mock.patch("scripts.install.subprocess.run") as run:
                     with redirect_stdout(StringIO()):
                         self.assertEqual(0, main(["--bin-dir", tmp, "--yes"]))
@@ -66,6 +66,27 @@ class InstallScriptTest(unittest.TestCase):
             run.assert_called_once()
             command = run.call_args.args[0]
             self.assertEqual(command[-4:], ["pip", "install", "--user", "rich"])
+
+    def test_install_script_installs_missing_runtime_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("scripts.install.importlib.util.find_spec", side_effect=_missing_only("slack_sdk", "aiohttp")):
+                with mock.patch("scripts.install.subprocess.run") as run:
+                    out = StringIO()
+                    with redirect_stdout(out):
+                        self.assertEqual(0, main(["--bin-dir", tmp]))
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[-5:], ["pip", "install", "--user", "slack-sdk", "aiohttp"])
+        self.assertIn("Installed runtime dependencies", out.getvalue())
+
+
+def _missing_only(*missing: str):
+    missing_set = set(missing)
+
+    def find_spec(name: str):
+        return None if name in missing_set else object()
+
+    return find_spec
 
 
 if __name__ == "__main__":

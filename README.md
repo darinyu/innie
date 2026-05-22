@@ -77,6 +77,34 @@ and then starts the Slack setup wizard.
 For the guided Slack screenshots checklist, see
 [`docs/slack-setup.md`](docs/slack-setup.md).
 
+## Run
+
+Test the local route without Slack by feeding one Slack-shaped event file through
+the echo adapter:
+
+```bash
+innie run --once --event-file event.json --harness echo
+```
+
+After `innie slack setup`, test one real Slack-routed event and exit:
+
+```bash
+innie run --once --harness echo
+```
+
+`--once` is a smoke-test mode: Innie connects, waits for one routed Slack event,
+processes it, prints the session id and log command, then exits.
+
+Run continuously with:
+
+```bash
+innie run --harness echo
+```
+
+Stop it with Ctrl-C.
+
+Use `--harness codex` after the echo path works.
+
 ## Dependencies
 
 Planned runtime dependencies:
@@ -87,8 +115,8 @@ Planned runtime dependencies:
   before installing it, and Innie falls back to plain text if you skip it.
 - A Slack app for DM and channel mention triggers. Innie should provide a Slack
   app setup wizard through `innie slack setup`.
-- At least one installed agent harness, such as Codex CLI, Claude Code,
-  OpenCode, or Goose.
+- Codex CLI. V0 supports Codex; Claude Code, OpenCode, Goose, and custom
+  runtimes are future adapters.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
   environment.
 

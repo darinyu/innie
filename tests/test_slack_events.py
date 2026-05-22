@@ -101,6 +101,48 @@ class SlackEventIntakeTest(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertEqual("duplicate_retry", decision.reason)
 
+    def test_accepts_message_in_existing_innie_thread_without_mention(self) -> None:
+        payload = {
+            "event_id": "EvThreadReply",
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "172.2",
+                "thread_ts": "172.1",
+                "text": "here is more context",
+            },
+        }
+
+        decision = normalize_slack_event(
+            payload,
+            bot_user_id="U_BOT",
+            known_thread_roots={("C1", "172.1")},
+        )
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual("thread_reply", decision.trigger.trigger_type)
+
+    def test_rejects_thread_reply_when_thread_is_not_known(self) -> None:
+        payload = {
+            "event_id": "EvUnknownThreadReply",
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "172.3",
+                "thread_ts": "172.1",
+                "text": "random thread",
+            },
+        }
+
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", known_thread_roots=set())
+
+        self.assertFalse(decision.accepted)
+        self.assertEqual("not_for_innie", decision.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

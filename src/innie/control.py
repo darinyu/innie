@@ -36,10 +36,26 @@ def summarize_session(db: sqlite3.Connection, session_id: str) -> str:
         (session_id,),
     ).fetchone()
     last_event_text = "none" if last_event is None else f"{last_event['event_type']} at {last_event['created_at']}"
+    current_task = db.execute(
+        """
+        SELECT id, status, harness_id
+        FROM tasks
+        WHERE session_id = ? AND status NOT IN ('completed', 'failed', 'canceled')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    current_task_text = (
+        "none"
+        if current_task is None
+        else f"{current_task['id']} {current_task['status']} via {current_task['harness_id']}"
+    )
     return (
         f"Innie session {session_id}\n"
         f"status: {session['status']}\n"
         f"queued_inputs: {queued}\n"
+        f"current_task: {current_task_text}\n"
         f"last_event: {last_event_text}\n"
         f"output_target: {session['output_target']}"
     )
