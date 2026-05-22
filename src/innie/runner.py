@@ -186,7 +186,7 @@ async def _run_once_socket_async(
     workspace = workspace.resolve()
     config = read_workspace_config(workspace)
     secrets = load_secrets(workspace)
-    selected_harness = harness_id or config.harness_selected or "echo"
+    selected_harness = harness_id or config.harness_selected or "codex"
     selected_bot_user_id = bot_user_id or config.bot_user_id
     if not selected_bot_user_id:
         raise RuntimeError("Slack bot user id is missing. Run `innie slack setup` or pass --bot-user-id.")

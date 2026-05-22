@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 import asyncio
+from contextlib import suppress
 import json
 from typing import Any
 
@@ -25,6 +26,8 @@ class CodexCliAdapter:
     def __init__(self, *, spawn: SpawnFn | None = None) -> None:
         self._spawn = spawn or self._default_spawn
         self._processes: dict[str, asyncio.subprocess.Process] = {}
+        self._stderr_lines: dict[str, list[str]] = {}
+        self._stderr_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start_task(self, request: TaskRequest) -> TaskHandle:
         process = await self._spawn(
@@ -33,10 +36,16 @@ class CodexCliAdapter:
             "--json",
             "--cd",
             request.workspace,
-            request.goal,
+            "-",
             cwd=request.workspace,
         )
+        await _write_prompt(process, request.goal)
         self._processes[request.task_id] = process
+        stderr = getattr(process, "stderr", None)
+        if stderr is not None:
+            lines: list[str] = []
+            self._stderr_lines[request.task_id] = lines
+            self._stderr_tasks[request.task_id] = asyncio.create_task(_drain_stderr(stderr, lines))
         return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
 
     async def send_input(self, task_id: str, input: str) -> None:
@@ -66,10 +75,17 @@ class CodexCliAdapter:
             if event is not None:
                 yield event
         returncode = await process.wait()
+        stderr_task = self._stderr_tasks.pop(task_id, None)
+        if stderr_task is not None:
+            await stderr_task
         if returncode == 0:
             yield HarnessEvent(type="completed", message="Codex completed.")
         else:
-            yield HarnessEvent(type="failed", message=f"Codex exited with status {returncode}")
+            message = f"Codex exited with status {returncode}"
+            stderr_summary = _stderr_summary(self._stderr_lines.pop(task_id, []))
+            if stderr_summary:
+                message = f"{message}: {stderr_summary}"
+            yield HarnessEvent(type="failed", message=message)
 
     async def collect_artifacts(self, task_id: str) -> list[HarnessArtifact]:
         return []
@@ -78,9 +94,35 @@ class CodexCliAdapter:
         return await asyncio.create_subprocess_exec(
             *args,
             cwd=cwd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            stderr=asyncio.subprocess.PIPE,
         )
+
+
+async def _write_prompt(process: asyncio.subprocess.Process, prompt: str) -> None:
+    stdin = getattr(process, "stdin", None)
+    if stdin is None:
+        return
+    with suppress(BrokenPipeError, ConnectionResetError):
+        stdin.write(prompt.encode("utf-8"))
+        await stdin.drain()
+    stdin.close()
+    wait_closed = getattr(stdin, "wait_closed", None)
+    if wait_closed is not None:
+        with suppress(BrokenPipeError, ConnectionResetError):
+            await wait_closed()
+
+
+async def _drain_stderr(stderr, lines: list[str]) -> None:
+    async for raw_line in stderr:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if line:
+            lines.append(line)
+
+
+def _stderr_summary(lines: list[str], *, limit: int = 3) -> str:
+    return "; ".join(lines[-limit:])
 
 
 def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:

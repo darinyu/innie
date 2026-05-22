@@ -28,6 +28,11 @@ class FakeSocketClient:
         self.closed = True
 
 
+class FailingConnectSocketClient(FakeSocketClient):
+    async def connect(self) -> None:
+        raise RuntimeError("connect interrupted")
+
+
 class SlackSocketModeEventSourceTest(unittest.TestCase):
     def test_receive_once_acks_envelope_and_returns_payload(self) -> None:
         fake_client = FakeSocketClient()
@@ -41,6 +46,19 @@ class SlackSocketModeEventSourceTest(unittest.TestCase):
 
         self.assertEqual("Ev1", payload["event_id"])
         self.assertEqual([{"envelope_id": "Env1"}], fake_client.responses)
+        self.assertTrue(fake_client.closed)
+
+    def test_receive_once_closes_client_when_connect_is_interrupted(self) -> None:
+        fake_client = FailingConnectSocketClient()
+        source = SlackSocketModeEventSource(
+            "xapp-test",
+            client_factory=lambda _token: fake_client,
+            response_factory=lambda envelope_id: {"envelope_id": envelope_id},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "connect interrupted"):
+            asyncio.run(source.receive_once())
+
         self.assertTrue(fake_client.closed)
 
 

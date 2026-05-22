@@ -74,6 +74,20 @@ class CliRunTest(unittest.TestCase):
             self.assertIn("processed one event; exiting because --once was set", output)
             run.assert_called_once()
 
+    def test_run_once_defaults_to_codex_harness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = StringIO()
+            with mock.patch(
+                "innie.cli.run_once_socket",
+                return_value=RunOnceResult(True, "accepted", "sess_1", session_status="new"),
+            ) as run:
+                with redirect_stdout(stdout):
+                    code = main(["--workspace", tmp, "run", "--once"])
+
+            self.assertEqual(0, code)
+            self.assertIn("Innie run starting: harness=codex", stdout.getvalue())
+            self.assertEqual("codex", run.call_args.kwargs["harness_id"])
+
     def test_run_without_once_uses_continuous_socket_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout = StringIO()
@@ -86,6 +100,15 @@ class CliRunTest(unittest.TestCase):
             self.assertIn("Innie run starting", output)
             self.assertIn("continuous=True", output)
             run.assert_called_once()
+
+    def test_run_status_messages_flush_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("innie.cli.run_once_socket", return_value=RunOnceResult(True, "accepted", "sess_1", session_status="new")):
+                with mock.patch("builtins.print") as print_mock:
+                    self.assertEqual(0, main(["--workspace", tmp, "run", "--once", "--harness", "echo"]))
+
+            self.assertIn(mock.call("Innie run starting: harness=echo once=True continuous=False", flush=True), print_mock.mock_calls)
+            self.assertIn(mock.call("Socket Mode enabled; waiting for one Slack event...", flush=True), print_mock.mock_calls)
 
 
 if __name__ == "__main__":

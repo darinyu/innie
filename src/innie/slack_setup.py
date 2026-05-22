@@ -289,7 +289,7 @@ def run_slack_setup(
     )
     messages.append("Saved Slack tokens with restrictive file permissions.")
     messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
-    messages.append("Next: run `innie run --once --harness echo` and send one Slack DM or mention.")
+    messages.append("Next: run `innie run --once --harness codex` and send one Slack DM or mention.")
     messages.append("After a session exists, inspect it with `innie status <session-id>` or `innie logs <session-id>`.")
     return SlackSetupResult(ok=True, messages=messages)
 

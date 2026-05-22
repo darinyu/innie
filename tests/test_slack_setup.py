@@ -83,6 +83,7 @@ class SlackSetupTest(unittest.TestCase):
 
             self.assertTrue(result.ok, result.messages)
             self.assertIn("Next:", "\n".join(result.messages))
+            self.assertIn("innie run --once --harness codex", "\n".join(result.messages))
             manifest = json.loads((workspace / ".innie" / "slack-manifest.json").read_text())
             self.assertEqual("innie", manifest["display_information"]["name"])
             config = (workspace / ".innie" / "config.yaml").read_text()

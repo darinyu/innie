@@ -50,7 +50,7 @@ def write_workspace_config(
 ) -> None:
     path = config_path(workspace)
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing_harness = "null"
+    existing_harness = "codex"
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("selected:"):

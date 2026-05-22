@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run Innie against Slack or one Slack-shaped event")
     run_parser.add_argument("--once", action="store_true", help="Process one event and exit")
     run_parser.add_argument("--event-file", type=Path, default=None, help="Slack event payload JSON file")
-    run_parser.add_argument("--harness", choices=("echo", "codex"), default="echo", help="Harness adapter to use")
+    run_parser.add_argument("--harness", choices=("echo", "codex"), default="codex", help="Harness adapter to use")
     run_parser.add_argument("--bot-user-id", default="U_BOT", help="Bot user id for local event-file runs")
     run_parser.add_argument("--watched-user-id", default=None, help="Optional watched user id for mention mode")
 
@@ -111,10 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         if args.event_file is not None and not args.once:
             parser.error("`innie run --event-file` requires --once")
-        print(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
+        _print_run(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
         if args.event_file is None:
             if args.once:
-                print("Socket Mode enabled; waiting for one Slack event...")
+                _print_run("Socket Mode enabled; waiting for one Slack event...")
                 result = run_once_socket(
                     state_dir,
                     harness_id=args.harness,
@@ -122,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
                     watched_user_id=args.watched_user_id,
                 )
             else:
-                print("Socket Mode enabled; listening until interrupted with Ctrl-C...")
+                _print_run("Socket Mode enabled; listening until interrupted with Ctrl-C...")
                 run_forever_socket(
                     state_dir,
                     harness_id=args.harness,
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
         else:
-            print(f"Reading one Slack event from {args.event_file}")
+            _print_run(f"Reading one Slack event from {args.event_file}")
             result = run_once_event_file(
                 state_dir,
                 args.event_file,
@@ -141,12 +141,12 @@ def main(argv: list[str] | None = None) -> int:
                 slack=ConsoleSlackClient(),
             )
         if not result.accepted:
-            print(f"ignored event: {result.reason}")
-            print("processed one event; exiting because --once was set")
+            _print_run(f"ignored event: {result.reason}")
+            _print_run("processed one event; exiting because --once was set")
             return 0
-        print(f"accepted {result.session_status or 'unknown'} session {result.session_id}")
-        print(f"logs: innie --workspace {state_dir} logs {result.session_id}")
-        print("processed one event; exiting because --once was set")
+        _print_run(f"accepted {result.session_status or 'unknown'} session {result.session_id}")
+        _print_run(f"logs: innie --workspace {state_dir} logs {result.session_id}")
+        _print_run("processed one event; exiting because --once was set")
         return 0
 
     parser.error(f"unsupported command: {args.command}")
@@ -164,6 +164,10 @@ def _open_workspace_db(workspace: Path):
 
 def _confirm_default_yes(prompt: str) -> bool:
     return input(prompt).strip().lower() not in {"n", "no"}
+
+
+def _print_run(message: str) -> None:
+    print(message, flush=True)
 
 
 def _format_logs(db, session_id: str) -> str:
