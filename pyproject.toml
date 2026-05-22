@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "innie"
+version = "0.1.0"
+description = "Slack-first sidekick layer for durable AI work sessions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Innie Contributors" }]
+dependencies = []
+
+[project.scripts]
+innie = "innie.cli:main"
