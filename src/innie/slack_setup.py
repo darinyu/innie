@@ -28,6 +28,7 @@ BOT_SCOPES = [
     "groups:history",
     "im:history",
     "im:read",
+    "reactions:read",
     "reactions:write",
 ]
 BOT_EVENTS = ["app_mention", "message.im"]

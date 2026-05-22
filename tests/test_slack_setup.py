@@ -51,6 +51,7 @@ class SlackSetupTest(unittest.TestCase):
         self.assertIn("chat:write", scopes)
         self.assertIn("files:read", scopes)
         self.assertIn("files:write", scopes)
+        self.assertIn("reactions:read", scopes)
 
     def test_manual_setup_writes_manifest_config_and_restrictive_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
