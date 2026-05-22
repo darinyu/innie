@@ -99,9 +99,10 @@ def run_once_socket(
     slack=None,
     event_source=None,
     adapters: dict[str, HarnessAdapter] | None = None,
+    output: OutputFn | None = None,
 ) -> RunOnceResult:
     return asyncio.run(
-        _run_once_socket_async(
+        _run_until_accepted_socket_async(
             workspace,
             harness_id=harness_id,
             bot_user_id=bot_user_id,
@@ -109,6 +110,7 @@ def run_once_socket(
             slack=slack,
             event_source=event_source,
             adapters=adapters,
+            output=output,
         )
     )
 
@@ -204,6 +206,33 @@ async def _run_once_socket_async(
         slack=selected_slack,
         adapters=adapters,
     )
+
+
+async def _run_until_accepted_socket_async(
+    workspace: Path,
+    *,
+    harness_id: str | None,
+    bot_user_id: str | None,
+    watched_user_id: str | None,
+    slack,
+    event_source,
+    adapters: dict[str, HarnessAdapter] | None,
+    output: OutputFn | None,
+) -> RunOnceResult:
+    while True:
+        result = await _run_once_socket_async(
+            workspace,
+            harness_id=harness_id,
+            bot_user_id=bot_user_id,
+            watched_user_id=watched_user_id,
+            slack=slack,
+            event_source=event_source,
+            adapters=adapters,
+        )
+        if result.accepted:
+            return result
+        if output is not None:
+            output(f"ignored event: {result.reason} {describe_slack_payload(result.payload)}".rstrip())
 
 
 async def process_payload(

@@ -114,12 +114,13 @@ def main(argv: list[str] | None = None) -> int:
         _print_run(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
         if args.event_file is None:
             if args.once:
-                _print_run("Socket Mode enabled; waiting for one Slack event...")
+                _print_run("Socket Mode enabled; waiting for one accepted Slack event...")
                 result = run_once_socket(
                     state_dir,
                     harness_id=args.harness,
                     bot_user_id=None if args.bot_user_id == "U_BOT" else args.bot_user_id,
                     watched_user_id=args.watched_user_id,
+                    output=_print_run,
                 )
             else:
                 _print_run("Socket Mode enabled; listening until interrupted with Ctrl-C...")
@@ -142,11 +143,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         if not result.accepted:
             _print_run(f"ignored event: {result.reason}")
-            _print_run("processed one event; exiting because --once was set")
+            _print_run("processed one event-file event; exiting because --once was set")
             return 0
         _print_run(format_run_acceptance(result))
         _print_run(f"logs: innie --workspace {state_dir} logs {result.session_id}")
-        _print_run("processed one event; exiting because --once was set")
+        _print_run("processed one accepted event; exiting because --once was set")
         return 0
 
     parser.error(f"unsupported command: {args.command}")

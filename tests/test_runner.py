@@ -86,6 +86,46 @@ class RunnerTest(unittest.TestCase):
             self.assertTrue(result.accepted)
             self.assertIn("message D1 100.1 Done:\nhello from socket", printed)
 
+    def test_run_once_socket_ignores_self_echo_until_first_accepted_event(self) -> None:
+        class FakeEventSource:
+            def __init__(self) -> None:
+                self._payloads = [
+                    {
+                        "event_id": "EvSelf",
+                        "event": {
+                            "type": "message",
+                            "channel": "C1",
+                            "user": "U_BOT",
+                            "bot_id": "B1",
+                            "ts": "99.1",
+                            "text": "Task completed.",
+                        },
+                    },
+                    payload("hello after self echo"),
+                ]
+
+            async def receive_once(self) -> dict:
+                return self._payloads.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            printed: list[str] = []
+            result = run_once_socket(
+                Path(tmp),
+                harness_id="echo",
+                bot_user_id="U_BOT",
+                slack=ConsoleSlackClient(output=printed.append),
+                event_source=FakeEventSource(),
+                output=printed.append,
+            )
+
+            self.assertTrue(result.accepted)
+            self.assertEqual("new", result.session_status)
+            self.assertIn(
+                "ignored event: self_echo event_id=EvSelf type=message channel=C1 ts=99.1 user=U_BOT bot_id=B1 text=Task completed.",
+                printed,
+            )
+            self.assertIn("message D1 100.1 Done:\nhello after self echo", printed)
+
     def test_run_forever_socket_processes_until_event_source_stops(self) -> None:
         class FakeEventSource:
             def __init__(self) -> None:
