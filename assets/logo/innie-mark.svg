@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 190" role="img" aria-labelledby="title desc">
+  <title id="title">Innie mark</title>
+  <desc id="desc">A flat percent-inspired mark with an outie dot, boundary slash, and innie dot.</desc>
+  <rect x="34" y="34" width="122" height="122" rx="18" fill="#05070A"/>
+  <rect x="88" y="48" width="14" height="96" rx="7" transform="rotate(38 95 96)" fill="#EEF6FF"/>
+  <circle cx="66" cy="66" r="16" fill="#EEF6FF"/>
+  <circle cx="124" cy="124" r="18" fill="#93C5FD"/>
+  <circle cx="124" cy="124" r="5" fill="#05070A"/>
+</svg>
