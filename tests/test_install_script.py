@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.install import main
 
@@ -15,8 +16,9 @@ class InstallScriptTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp)
             out = StringIO()
-            with redirect_stdout(out):
-                self.assertEqual(0, main(["--bin-dir", str(bin_dir)]))
+            with mock.patch("scripts.install.importlib.util.find_spec", return_value=object()):
+                with redirect_stdout(out):
+                    self.assertEqual(0, main(["--bin-dir", str(bin_dir)]))
 
             command = bin_dir / "innie"
             self.assertTrue(command.exists())
@@ -29,6 +31,29 @@ class InstallScriptTest(unittest.TestCase):
 
             self.assertIn("Installed innie command", out.getvalue())
             self.assertIn("init", result.stdout)
+
+    def test_install_script_asks_before_installing_rich(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
+                with mock.patch("builtins.input", return_value="n"):
+                    with mock.patch("scripts.install.subprocess.run") as run:
+                        out = StringIO()
+                        with redirect_stdout(out):
+                            self.assertEqual(0, main(["--bin-dir", tmp]))
+
+            run.assert_not_called()
+            self.assertIn("Skipping rich install", out.getvalue())
+
+    def test_install_script_can_install_rich_with_yes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
+                with mock.patch("scripts.install.subprocess.run") as run:
+                    with redirect_stdout(StringIO()):
+                        self.assertEqual(0, main(["--bin-dir", tmp, "--yes"]))
+
+            run.assert_called_once()
+            command = run.call_args.args[0]
+            self.assertEqual(command[-4:], ["pip", "install", "--user", "rich"])
 
 
 if __name__ == "__main__":

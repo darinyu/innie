@@ -83,6 +83,8 @@ Planned runtime dependencies:
 
 - Python 3.10+.
 - SQLite 3 for local durable session state.
+- Rich for colored, wrapped terminal setup screens. `scripts/install.py` asks
+  before installing it, and Innie falls back to plain text if you skip it.
 - A Slack app for DM and channel mention triggers. Innie should provide a Slack
   app setup wizard through `innie slack setup`.
 - At least one installed agent harness, such as Codex CLI, Claude Code,

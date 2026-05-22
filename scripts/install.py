@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 from pathlib import Path
 import os
 import stat
+import subprocess
 import sys
 
 
@@ -15,7 +17,14 @@ def main(argv: list[str] | None = None) -> int:
         default=Path.home() / ".local" / "bin",
         help="Directory where the innie command should be written",
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Approve installing optional UX dependencies such as rich",
+    )
     args = parser.parse_args(argv)
+
+    _ensure_rich(assume_yes=args.yes)
 
     repo_root = Path(__file__).resolve().parents[1]
     src_dir = repo_root / "src"
@@ -29,6 +38,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Add this directory to PATH if needed: {args.bin_dir}")
     print("Start with: innie init")
     return 0
+
+
+def _ensure_rich(*, assume_yes: bool) -> None:
+    if importlib.util.find_spec("rich") is not None:
+        print("Rich terminal UI: available")
+        return
+
+    print("Rich terminal UI: not installed")
+    print("Rich gives Innie colored, wrapped setup screens. Innie can run without it, but setup is harder to read.")
+    if not assume_yes:
+        answer = input("Install rich now with Python pip? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("Skipping rich install. Innie will use plain terminal output.")
+            return
+
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--user", "rich"],
+        check=True,
+    )
+    print("Installed rich")
 
 
 def _launcher(src_dir: Path) -> str:

@@ -11,6 +11,7 @@ from typing import Any, Callable
 from urllib import parse, request
 
 from .config import load_secrets, write_secrets, write_workspace_config
+from .terminal_ui import WizardUI
 
 
 PromptFn = Callable[[str], str]
@@ -132,6 +133,7 @@ def run_slack_setup(
     prompt_secret = prompt_secret or prompt
     open_url = open_url or (lambda url: None)
     workspace = workspace.resolve()
+    ui = WizardUI(output)
     messages: list[str] = []
     existing = load_secrets(workspace)
     if existing.get("slack_bot_token"):
@@ -145,23 +147,27 @@ def run_slack_setup(
         except Exception as exc:
             messages.append(f"Existing Slack token validation failed: {exc}")
 
-    messages.extend(
-        [
-            "Slack setup takes about 5-8 minutes.",
-            "Use docs/slack-setup.md if you want screenshots beside the wizard.",
-        ]
+    ui.step(
+        "Slack setup",
+        "5-8 minutes",
+        "Innie will create a Slack manifest, guide OAuth install, and store tokens locally. "
+        "Use docs/slack-setup.md if you want screenshots beside the wizard.",
     )
+    messages.append("Slack setup started.")
+    ui.step("Step 1/6", "Name the Slack app", "About 1 minute. Names are modifiable in Slack later.")
     app_name = prompt(
-        "Step 1/6 - Name the Slack app (1 minute), modifiable in the future.\n"
         "Slack app name [innie]: "
     ).strip() or "innie"
     display_name = prompt(
         "Bot display name [Innie]: "
     ).strip() or "Innie"
+    ui.step(
+        "Step 2/6",
+        "Choose trigger mode",
+        "Mode 1: respond when someone tags the bot, like @Innie.\n"
+        "Mode 2: respond when someone tags you, like @<username>, in channels where the app is present.",
+    )
     trigger_mode_choice = prompt(
-        "Step 2/6 - Choose when Innie should respond.\n"
-        "  Mode 1: respond when someone tags the bot, like @Innie.\n"
-        "  Mode 2: respond when someone tags you, like @<username>, in channels where the app is present.\n"
         "Choose Mode 1 or Mode 2 [1]: "
     ).strip() or "1"
     trigger_mode = "user_mention" if trigger_mode_choice == "2" else "bot_mention"
@@ -179,44 +185,31 @@ def run_slack_setup(
 
     manifest_path = workspace / ".innie" / "slack-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_json = json.dumps(manifest, indent=2, sort_keys=True)
+    ui.step(
+        "Step 3/6",
+        "Create Slack app from manifest",
+        "Open https://api.slack.com/apps\n"
+        "Click Create New App -> From an app manifest -> select your workspace.\n"
+        "Copy the manifest below and paste it into Slack.",
+    )
+    manifest_json = ui.manifest(manifest)
     manifest_path.write_text(manifest_json + "\n", encoding="utf-8")
     messages.append(f"Step 3/6 - Wrote Slack manifest for manual paste: {manifest_path}")
-    messages.append(
-        "In Slack API: Create New App -> From an app manifest -> paste this file. "
-        "This is usually 6 clicks and 2-3 minutes."
-    )
-    output(
-        "\n".join(
-            [
-                "",
-                "Step 3/6 - Create the Slack app from the manifest.",
-                "Open: https://api.slack.com/apps",
-                "Click: Create New App -> From an app manifest -> select your workspace.",
-                "Paste this manifest:",
-                "",
-                manifest_json,
-                "",
-            ]
-        )
-    )
     prompt(
-        "Step 3/6 - Create the Slack app from the generated manifest.\n"
-        f"  Manifest file: {manifest_path}\n"
-        "  Open https://api.slack.com/apps\n"
-        "  Click Create New App -> From an app manifest -> select your workspace.\n"
-        "  Paste the manifest printed above.\n"
-        "  This is usually 6 clicks and 2-3 minutes.\n"
-        "Press Enter after the Slack app is created from the manifest."
+        "Press Enter after Slack creates the app."
     )
-    _clear_terminal(output)
+    ui.clear()
 
+    ui.step(
+        "Step 4/6",
+        "Copy app credentials",
+        "In Slack API, open Basic Information -> App Credentials. About 2 clicks.",
+    )
     client_id = prompt(
-        "Step 4/6 - In Slack API, open Basic Information -> App Credentials "
-        "(about 2 clicks). Copy Client ID: "
+        "Client ID: "
     ).strip()
-    client_secret = prompt_secret("Step 4/6 - Copy Client Secret: ").strip()
-    app_id = prompt("Step 4/6 - Copy App ID (optional but useful): ").strip()
+    client_secret = prompt_secret("Client Secret: ").strip()
+    app_id = prompt("App ID (optional but useful): ").strip()
 
     oauth_url = _oauth_url(client_id, BOT_SCOPES, redirect_url)
     messages.append("Step 5/6 - OAuth install. This opens a local callback server on localhost:8765.")
@@ -259,12 +252,16 @@ def run_slack_setup(
     auth = api.post_json("auth.test", bot_token, {})
     bot_user_id = auth.get("user_id", "")
 
-    xapp_token = prompt_secret(
-        "Step 6/6 - In Basic Information -> App-Level Tokens, Generate Token and Scopes "
-        "(about 4 clicks). Add `connections:write`, then paste xapp- token: "
-    ).strip()
-    if not xapp_token.startswith("xapp-"):
-        return SlackSetupResult(ok=False, messages=messages + ["App-level token must start with xapp-."])
+    ui.step(
+        "Step 6/6",
+        "Create Socket Mode token",
+        "In Basic Information -> App-Level Tokens, click Generate Token and Scopes. "
+        "Add connections:write. About 4 clicks.",
+    )
+    try:
+        xapp_token = _prompt_xapp_token(prompt_secret, output)
+    except SlackApiError as exc:
+        return SlackSetupResult(ok=False, messages=[str(exc)])
     api.post_json("apps.connections.open", xapp_token, {})
     messages.append("Validated bot token and app-level Socket Mode token.")
 
@@ -288,6 +285,18 @@ def run_slack_setup(
     messages.append("Saved Slack tokens with restrictive file permissions.")
     messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
     return SlackSetupResult(ok=True, messages=messages)
+
+
+def _prompt_xapp_token(prompt_secret: SecretPromptFn, output: OutputFn) -> str:
+    for attempt in range(3):
+        xapp_token = prompt_secret("App-level token (xapp-...): ").strip()
+        if xapp_token.startswith("xapp-"):
+            return xapp_token
+        if not xapp_token:
+            output("No token entered. Paste the xapp- token, or press Ctrl-C to stop setup.")
+        else:
+            output("App-level token must start with xapp-. Try again, or press Ctrl-C to stop setup.")
+    raise SlackApiError("App-level token must start with xapp-.")
 
 
 def _confirm(prompt: PromptFn, text: str) -> bool:
@@ -390,7 +399,3 @@ def _oauth_url(client_id: str, scopes: list[str], redirect_url: str) -> str:
 def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         return sock.connect_ex(("localhost", port)) == 0
-
-
-def _clear_terminal(output: OutputFn) -> None:
-    output("\033[2J\033[H")

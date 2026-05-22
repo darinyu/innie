@@ -90,15 +90,15 @@ class SlackSetupTest(unittest.TestCase):
             mode = os.stat(secrets_path).st_mode & 0o777
             self.assertEqual(0o600, mode)
             prompt_text = "\n".join(prompts)
-            self.assertIn("Step 1/6", prompt_text)
-            self.assertIn("modifiable in the future", prompt_text)
-            self.assertIn("Mode 1", prompt_text)
-            self.assertIn("Mode 2", prompt_text)
             self.assertIn("Client ID", prompt_text)
             self.assertIn("Client Secret", prompt_text)
             self.assertIn("App ID", prompt_text)
             self.assertNotIn("OAuth callback mode", prompt_text)
             output_text = "\n".join(outputs)
+            self.assertIn("Step 1/6", output_text)
+            self.assertIn("modifiable", output_text)
+            self.assertIn("Mode 1", output_text)
+            self.assertIn("Mode 2", output_text)
             self.assertIn("https://api.slack.com/apps", output_text)
             self.assertIn('"display_information"', output_text)
             self.assertIn("\033[2J\033[H", output_text)
@@ -137,6 +137,37 @@ class SlackSetupTest(unittest.TestCase):
             config = (workspace / ".innie" / "config.yaml").read_text()
             self.assertIn("trigger_mode: user_mention", config)
             self.assertIn("watched_user_id: U_INSTALLER", config)
+
+    def test_xapp_token_prompt_retries_blank_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            answers = iter(
+                [
+                    "",
+                    "",
+                    "1",
+                    "",
+                    "client-id",
+                    "client-secret",
+                    "",
+                    "abc123",
+                    "",
+                    "xapp-token",
+                ]
+            )
+            outputs: list[str] = []
+
+            result = run_slack_setup(
+                workspace,
+                api=FakeSlackApi(),
+                prompt=lambda _text: next(answers),
+                prompt_secret=lambda _text: next(answers),
+                output=outputs.append,
+                oauth_timeout_seconds=0,
+            )
+
+            self.assertTrue(result.ok, result.messages)
+            self.assertIn("No token entered", "\n".join(outputs))
 
     def test_oauth_collector_continues_automatically_when_callback_arrives(self) -> None:
         server = FakeOAuthServer()
