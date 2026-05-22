@@ -30,7 +30,9 @@ class CliInitTest(unittest.TestCase):
                     result = main(["--state-dir", str(workspace), "init", "--yes"])
 
             self.assertEqual(0, result)
-            slack_setup.assert_called_once_with(workspace)
+            slack_setup.assert_called_once()
+            self.assertEqual(workspace, slack_setup.call_args.args[0])
+            self.assertIn("prompt_secret", slack_setup.call_args.kwargs)
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
             self.assertIn("slack setup started", out.getvalue())
 

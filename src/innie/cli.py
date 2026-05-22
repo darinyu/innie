@@ -7,6 +7,7 @@ from .bootstrap import init_workspace
 from .config import innie_dir
 from .control import cancel_session, summarize_session
 from .db import connect, initialize_schema
+from .prompting import prompt_masked_secret
 from .slack_setup import run_slack_setup
 
 
@@ -71,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Skipped Slack setup. Run `innie slack setup` when ready.")
             return 0
         if args.yes or _confirm_default_yes("Set up Slack now? [Y/n] "):
-            slack_result = run_slack_setup(state_dir)
+            slack_result = run_slack_setup(state_dir, prompt_secret=prompt_masked_secret)
             for line in slack_result.messages:
                 print(line)
             return 0 if slack_result.ok else 1
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "slack" and args.slack_command == "setup":
-        result = run_slack_setup(state_dir)
+        result = run_slack_setup(state_dir, prompt_secret=prompt_masked_secret)
         for line in result.messages:
             print(line)
         return 0 if result.ok else 1
