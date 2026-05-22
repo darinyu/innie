@@ -64,12 +64,6 @@ git clone https://github.com/darinyu/innie.git
 cd innie
 ```
 
-Current artifacts:
-
-- [Initial plan](docs/initial-plan.md)
-- [Logo assets](assets/logo)
-- [Demo animation](assets/demo/innie-flow.gif)
-
 Target install experience:
 
 ```bash
@@ -82,16 +76,17 @@ innie run
 
 Planned runtime dependencies:
 
-- Python asyncio runtime.
-- SQLite for local durable session state.
-- A Slack app for DM and channel mention triggers.
-- At least one installed harness, such as Codex, Claude Code, OpenCode, or
-  Goose.
+- Python 3.11+.
+- SQLite 3 for local durable session state.
+- A Slack app for DM and channel mention triggers. Innie should provide a Slack
+  app setup wizard through `innie slack setup`.
+- At least one installed agent harness, such as Codex CLI, Claude Code,
+  OpenCode, or Goose.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
   environment.
 
-Current repo assets have no runtime dependency. The demo GIF is generated with
-Python and Pillow via [assets/demo/generate_innie_flow_gif.py](assets/demo/generate_innie_flow_gif.py).
+Current repo assets have no runtime dependency. The demo GIF generator uses
+Python and Pillow.
 
 ## Contribute
 
