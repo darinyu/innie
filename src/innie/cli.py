@@ -16,15 +16,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace",
         type=Path,
         default=Path.cwd(),
-        help="Workspace directory that should contain .innie/",
+        dest="workspace",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=None,
+        dest="state_dir",
+        help="Directory where Innie stores durable local state in .innie/",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init_parser = subparsers.add_parser("init", help="Initialize a local Innie workspace")
+    init_parser = subparsers.add_parser("init", help="Initialize Innie and start guided setup")
     init_parser.add_argument(
         "--yes",
         action="store_true",
-        help="Accept creating local Innie files and intentionally skip missing optional dependencies",
+        help="Accept default setup choices",
+    )
+    init_parser.add_argument(
+        "--skip-slack-setup",
+        action="store_true",
+        help="Only create local durable state; do not start Slack setup",
     )
 
     slack_parser = subparsers.add_parser("slack", help="Slack setup and diagnostics")
@@ -46,31 +59,43 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    state_dir = args.state_dir or args.workspace
 
     if args.command == "init":
-        result = init_workspace(args.workspace, assume_yes=args.yes)
+        result = init_workspace(state_dir, assume_yes=args.yes)
         for line in result.messages:
             print(line)
-        return 0 if result.ok else 1
+        if not result.ok:
+            return 1
+        if args.skip_slack_setup:
+            print("Skipped Slack setup. Run `innie slack setup` when ready.")
+            return 0
+        if args.yes or _confirm_default_yes("Set up Slack now? [Y/n] "):
+            slack_result = run_slack_setup(state_dir)
+            for line in slack_result.messages:
+                print(line)
+            return 0 if slack_result.ok else 1
+        print("Skipped Slack setup. Run `innie slack setup` when ready.")
+        return 0
 
     if args.command == "slack" and args.slack_command == "setup":
-        result = run_slack_setup(args.workspace)
+        result = run_slack_setup(state_dir)
         for line in result.messages:
             print(line)
         return 0 if result.ok else 1
 
     if args.command == "status":
-        with _open_workspace_db(args.workspace) as db:
+        with _open_workspace_db(state_dir) as db:
             print(summarize_session(db, args.session_id))
         return 0
 
     if args.command == "logs":
-        with _open_workspace_db(args.workspace) as db:
+        with _open_workspace_db(state_dir) as db:
             print(_format_logs(db, args.session_id))
         return 0
 
     if args.command == "cancel":
-        with _open_workspace_db(args.workspace) as db:
+        with _open_workspace_db(state_dir) as db:
             print(cancel_session(db, args.session_id))
         return 0
 
@@ -85,6 +110,10 @@ def _open_workspace_db(workspace: Path):
     db = connect(db_path)
     initialize_schema(db)
     return db
+
+
+def _confirm_default_yes(prompt: str) -> bool:
+    return input(prompt).strip().lower() not in {"n", "no"}
 
 
 def _format_logs(db, session_id: str) -> str:

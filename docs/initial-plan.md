@@ -828,6 +828,8 @@ debug what happened.
 Task 1: Local workspace bootstrap.
 
 - Goal: make every install self-contained and inspectable.
+- Provide a low-dependency install script so a cloned checkout can add `innie`
+  to the user's command line without downloading a Python build backend.
 - Build `innie init` to check local dependencies before creating runtime state:
   Python 3.10+, SQLite 3, Slack configuration availability, and at least one
   supported harness command such as Codex CLI, Claude Code, OpenCode, or Goose.
@@ -840,9 +842,12 @@ Task 1: Local workspace bootstrap.
   `.innie/config.yaml`, `.innie/innie.db`, and `.innie/artifacts/`.
 - Initialize SQLite schema for sessions, task events, inbox rows, hook events,
   and artifacts.
+- By default, continue from `innie init` into the Slack setup wizard. Provide an
+  explicit skip flag only for tests and local state-only debugging.
 - Done when a fresh clone can run one command and produce a valid local Innie
-  workspace, with clear dependency status and no dependency installation unless
-  the user explicitly approved it.
+  command, then run `innie init` to create recoverable local state and start
+  Slack setup, with clear dependency status and no dependency installation
+  unless the user explicitly approved it.
 
 Task 2: Slack app setup wizard.
 

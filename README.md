@@ -52,8 +52,6 @@ Your dev environment
 
 ## Install
 
-Innie is in early design. The runtime is not packaged yet.
-
 Clone the repo:
 
 ```bash
@@ -61,13 +59,20 @@ git clone https://github.com/darinyu/innie.git
 cd innie
 ```
 
-Target install experience:
+Install the `innie` command from this checkout:
+
+```bash
+python3 scripts/install.py
+```
+
+Start setup:
 
 ```bash
 innie init
-innie slack setup
-innie run
 ```
+
+`innie init` checks local dependencies, creates durable local state in `.innie/`,
+and then starts the Slack setup wizard.
 
 ## Dependencies
 

@@ -95,16 +95,16 @@ def init_workspace(
 
     missing_required = [status for status in statuses if status.required and not status.ok]
     if missing_required:
-        messages.append("Missing required dependencies. Innie did not create workspace files.")
+        messages.append("Missing required dependencies. Innie did not create local state.")
         return InitResult(ok=False, messages=messages)
 
     missing_optional = [status for status in statuses if not status.required and not status.ok]
     if missing_optional:
-        messages.append("Optional dependencies are missing. Innie will not install anything automatically.")
+        messages.append("Optional setup is incomplete. Innie will not install or change tools without approval.")
         if not assume_yes:
-            answer = input_fn("Continue and create local workspace anyway? [y/N] ").strip().lower()
+            answer = input_fn("Continue and create Innie local state anyway? [y/N] ").strip().lower()
             if answer not in {"y", "yes"}:
-                messages.append("Canceled before creating workspace files.")
+                messages.append("Canceled before creating local state.")
                 return InitResult(ok=False, messages=messages)
 
     innie_dir = workspace / ".innie"
@@ -121,7 +121,7 @@ def init_workspace(
         initialize_schema(db)
         _record_dependency_status(db, statuses)
 
-    messages.append(f"Created workspace: {innie_dir}")
+    messages.append(f"Created Innie local state: {innie_dir}")
     messages.append(f"Initialized database: {db_path}")
     return InitResult(ok=True, messages=messages)
 
