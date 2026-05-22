@@ -30,6 +30,7 @@ def initialize_schema(db: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS slack_triggers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
             slack_event_id TEXT NOT NULL UNIQUE,
             trigger_type TEXT NOT NULL,
             slack_channel_id TEXT NOT NULL,
@@ -88,3 +89,18 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_column(db, "slack_triggers", "session_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")
+    _ensure_column(db, "hook_events", "dedupe_key", "TEXT")
+    db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_hook_events_dedupe_key
+        ON hook_events(dedupe_key)
+        WHERE dedupe_key IS NOT NULL
+        """
+    )
+
+
+def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
