@@ -32,7 +32,19 @@ class InstallScriptTest(unittest.TestCase):
             self.assertIn("Installed innie command", out.getvalue())
             self.assertIn("init", result.stdout)
 
-    def test_install_script_asks_before_installing_rich(self) -> None:
+    def test_install_script_defaults_to_installing_rich(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
+                with mock.patch("builtins.input", return_value=""):
+                    with mock.patch("scripts.install.subprocess.run") as run:
+                        out = StringIO()
+                        with redirect_stdout(out):
+                            self.assertEqual(0, main(["--bin-dir", tmp]))
+
+            run.assert_called_once()
+            self.assertIn("Installed rich", out.getvalue())
+
+    def test_install_script_can_skip_rich(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("scripts.install.importlib.util.find_spec", return_value=None):
                 with mock.patch("builtins.input", return_value="n"):

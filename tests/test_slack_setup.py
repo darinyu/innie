@@ -101,6 +101,8 @@ class SlackSetupTest(unittest.TestCase):
             self.assertIn("Mode 2", output_text)
             self.assertIn("https://api.slack.com/apps", output_text)
             self.assertIn('"display_information"', output_text)
+            self.assertIn("BEGIN SLACK APP MANIFEST", output_text)
+            self.assertIn("END SLACK APP MANIFEST", output_text)
             self.assertIn("\033[2J\033[H", output_text)
 
     def test_user_mention_mode_adds_channel_message_events(self) -> None:

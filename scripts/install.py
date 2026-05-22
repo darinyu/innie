@@ -48,8 +48,8 @@ def _ensure_rich(*, assume_yes: bool) -> None:
     print("Rich terminal UI: not installed")
     print("Rich gives Innie colored, wrapped setup screens. Innie can run without it, but setup is harder to read.")
     if not assume_yes:
-        answer = input("Install rich now with Python pip? [y/N] ").strip().lower()
-        if answer not in {"y", "yes"}:
+        answer = input("Install rich now with Python pip? [Y/n] ").strip().lower()
+        if answer in {"n", "no"}:
             print("Skipping rich install. Innie will use plain terminal output.")
             return
 

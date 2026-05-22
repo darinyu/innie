@@ -23,11 +23,16 @@ class WizardUI:
 
     def manifest(self, manifest: dict) -> str:
         manifest_json = json.dumps(manifest, indent=2, sort_keys=True)
-        rich_rendered = _rich_manifest(manifest_json)
-        if rich_rendered:
-            self._output(rich_rendered)
-        else:
-            self._output(f"\nPaste this manifest:\n\n{manifest_json}\n")
+        self.info("Copy only the JSON between BEGIN and END.")
+        self._output(
+            "\n".join(
+                [
+                    "----- BEGIN SLACK APP MANIFEST -----",
+                    manifest_json,
+                    "----- END SLACK APP MANIFEST -----",
+                ]
+            )
+        )
         return manifest_json
 
     def info(self, message: str) -> None:
@@ -49,19 +54,4 @@ def _rich_panel(label: str, title: str, body: str) -> str | None:
     console = Console(file=file, force_terminal=True, color_system="auto", width=88)
     text = Text(body)
     console.print(Panel(text, title=f"[bold cyan]{label}[/] [bold]{title}[/]", border_style="cyan"))
-    return file.getvalue().rstrip()
-
-
-def _rich_manifest(manifest_json: str) -> str | None:
-    try:
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich.syntax import Syntax
-    except ImportError:
-        return None
-
-    file = StringIO()
-    console = Console(file=file, force_terminal=True, color_system="auto", width=96)
-    syntax = Syntax(manifest_json, "json", theme="ansi_dark", word_wrap=True)
-    console.print(Panel(syntax, title="[bold cyan]Slack app manifest[/]", border_style="cyan"))
     return file.getvalue().rstrip()
