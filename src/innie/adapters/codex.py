@@ -23,8 +23,10 @@ class CodexCliAdapter:
         supports_subagents=True,
     )
 
-    def __init__(self, *, spawn: SpawnFn | None = None) -> None:
+    def __init__(self, *, spawn: SpawnFn | None = None, verbose: bool = False, output: Callable[[str], None] | None = None) -> None:
         self._spawn = spawn or self._default_spawn
+        self._verbose = verbose
+        self._output = output
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._stderr_lines: dict[str, list[str]] = {}
         self._stderr_tasks: dict[str, asyncio.Task[None]] = {}
@@ -74,6 +76,8 @@ class CodexCliAdapter:
             event = _map_codex_event(payload)
             if event is not None:
                 yield event
+            elif self._verbose and self._output is not None:
+                self._output(_describe_ignored_event(payload))
         returncode = await process.wait()
         stderr_task = self._stderr_tasks.pop(task_id, None)
         if stderr_task is not None:
@@ -132,9 +136,21 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
     if event_type in {"agent_message_delta", "exec_command_begin", "exec_command_output_delta"}:
         message = payload.get("delta") or payload.get("message") or payload.get("command")
         return HarnessEvent(type="progress", message=str(message) if message else None, payload=payload)
+    if event_type in {"reasoning_summary_delta", "reasoning_summary"}:
+        message = _extract_text(payload.get("delta") or payload.get("summary") or payload.get("message"))
+        return HarnessEvent(
+            type="progress",
+            message=f"Reasoning summary: {message}" if message else "Reasoning summary updated.",
+            payload=payload,
+        )
     if event_type in {"agent_message", "final_message", "run.completed"}:
-        message = payload.get("message") or payload.get("text") or payload.get("last_message")
+        message = _extract_text(payload.get("message") or payload.get("text") or payload.get("last_message"))
         return HarnessEvent(type="output", message=str(message) if message else None, payload=payload)
+    if event_type in {"item.completed", "response.output_item.done"}:
+        item = payload.get("item") or payload.get("output_item") or payload
+        if isinstance(item, dict) and item.get("role") == "assistant":
+            message = _extract_text(item)
+            return HarnessEvent(type="output", message=message, payload=payload)
     if event_type in {"token_count", "usage"}:
         return HarnessEvent(
             type="usage",
@@ -150,3 +166,29 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
     if event_type == "session.finished":
         return None
     return None
+
+
+def _extract_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [_extract_text(item) for item in value]
+        return "\n".join(part for part in parts if part)
+    if not isinstance(value, dict):
+        return str(value)
+    if value.get("type") in {"reasoning", "chain_of_thought"}:
+        return None
+    for key in ("text", "message", "content", "output_text", "summary"):
+        if key in value:
+            text = _extract_text(value[key])
+            if text:
+                return text
+    return None
+
+
+def _describe_ignored_event(payload: dict[str, Any]) -> str:
+    event_type = str(payload.get("type") or "unknown")
+    keys = ", ".join(sorted(str(key) for key in payload.keys() if key not in {"chain_of_thought", "reasoning"}))
+    return f"codex event ignored: type={event_type} keys={keys}"

@@ -89,6 +89,11 @@ class SessionActor:
         self._db.commit()
 
     async def _run_harness_turn(self, adapter: HarnessAdapter, task: TaskRecord, row) -> str:
+        start_event = HarnessEvent(type="started")
+        append_harness_event(self._db, task, start_event)
+        self._post_progress(task.id, start_event, row)
+        self._db.commit()
+
         await adapter.start_task(
             TaskRequest(
                 task_id=task.id,
@@ -102,6 +107,8 @@ class SessionActor:
         )
         terminal_status = "completed"
         async for event in adapter.stream_events(task.id):
+            if event.type == "started":
+                continue
             append_harness_event(self._db, task, event)
             self._post_progress(task.id, event, row)
             if event.type == "failed":

@@ -72,6 +72,66 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn(("D1", "100.1", "Progress: working"), slack.messages)
             self.assertIn(("D2", "200.1", "Done:\ndone"), slack.messages)
 
+    def test_manager_posts_task_started_even_when_adapter_does_not_emit_started(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+                task_id = manager.db.execute("SELECT id FROM tasks WHERE session_id = ?", (session.id,)).fetchone()["id"]
+                started_count = manager.db.execute(
+                    "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND event_type = 'harness.started'",
+                    (task_id,),
+                ).fetchone()["count"]
+            finally:
+                manager.close()
+
+            self.assertEqual(1, started_count)
+            self.assertIn(("D1", "100.1", f"Started task {task_id}."), slack.messages)
+
+    def test_manager_does_not_duplicate_adapter_started_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="started"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+                started_messages = [message for _, _, message in slack.messages if message.startswith("Started task ")]
+            finally:
+                manager.close()
+
+            self.assertEqual(1, len(started_messages))
+
     def test_manager_rehydrates_running_session_after_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"

@@ -3,6 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+try:
+    from rich.console import Console
+except ImportError:  # pragma: no cover - exercised when rich is not installed
+    Console = None
+
 from .bootstrap import init_workspace
 from .config import innie_dir
 from .control import cancel_session, summarize_session
@@ -61,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--harness", choices=("echo", "codex"), default="codex", help="Harness adapter to use")
     run_parser.add_argument("--bot-user-id", default="U_BOT", help="Bot user id for local event-file runs")
     run_parser.add_argument("--watched-user-id", default=None, help="Optional watched user id for mention mode")
+    run_parser.add_argument("--verbose", action="store_true", help="Print verbose runtime diagnostics")
 
     return parser
 
@@ -109,30 +115,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
+        run_output = _run_output(verbose=args.verbose)
         if args.event_file is not None and not args.once:
             parser.error("`innie run --event-file` requires --once")
-        _print_run(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
+        run_output(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
         if args.event_file is None:
             if args.once:
-                _print_run("Socket Mode enabled; waiting for one accepted Slack event...")
+                run_output("Socket Mode enabled; waiting for one accepted Slack event...")
                 result = run_once_socket(
                     state_dir,
                     harness_id=args.harness,
                     bot_user_id=None if args.bot_user_id == "U_BOT" else args.bot_user_id,
                     watched_user_id=args.watched_user_id,
-                    output=_print_run,
+                    output=run_output,
+                    verbose=args.verbose,
                 )
             else:
-                _print_run("Socket Mode enabled; listening until interrupted with Ctrl-C...")
+                run_output("Socket Mode enabled; listening until interrupted with Ctrl-C...")
                 run_forever_socket(
                     state_dir,
                     harness_id=args.harness,
                     bot_user_id=None if args.bot_user_id == "U_BOT" else args.bot_user_id,
                     watched_user_id=args.watched_user_id,
+                    output=run_output,
+                    verbose=args.verbose,
                 )
                 return 0
         else:
-            _print_run(f"Reading one Slack event from {args.event_file}")
+            run_output(f"Reading one Slack event from {args.event_file}")
             result = run_once_event_file(
                 state_dir,
                 args.event_file,
@@ -140,14 +150,16 @@ def main(argv: list[str] | None = None) -> int:
                 bot_user_id=args.bot_user_id,
                 watched_user_id=args.watched_user_id,
                 slack=ConsoleSlackClient(),
+                verbose=args.verbose,
+                output=run_output,
             )
         if not result.accepted:
-            _print_run(f"ignored event: {result.reason}")
-            _print_run("processed one event-file event; exiting because --once was set")
+            run_output(f"ignored event: {result.reason}")
+            run_output("processed one event-file event; exiting because --once was set")
             return 0
-        _print_run(format_run_acceptance(result))
-        _print_run(f"logs: innie --workspace {state_dir} logs {result.session_id}")
-        _print_run("processed one accepted event; exiting because --once was set")
+        run_output(format_run_acceptance(result))
+        run_output(f"logs: innie --workspace {state_dir} logs {result.session_id}")
+        run_output("processed one accepted event; exiting because --once was set")
         return 0
 
     parser.error(f"unsupported command: {args.command}")
@@ -169,6 +181,17 @@ def _confirm_default_yes(prompt: str) -> bool:
 
 def _print_run(message: str) -> None:
     print(message, flush=True)
+
+
+def _run_output(*, verbose: bool):
+    if not verbose or Console is None:
+        return _print_run
+    console = Console()
+
+    def output(message: str) -> None:
+        console.print(message, highlight=False)
+
+    return output
 
 
 def _format_logs(db, session_id: str) -> str:

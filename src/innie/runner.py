@@ -40,9 +40,9 @@ class ConsoleSlackClient:
         self._output(f"message {channel} {thread_ts} {text}")
 
 
-def adapter_map() -> dict[str, HarnessAdapter]:
+def adapter_map(*, verbose: bool = False, output: OutputFn | None = None) -> dict[str, HarnessAdapter]:
     return {
-        "codex": CodexCliAdapter(),
+        "codex": CodexCliAdapter(verbose=verbose, output=output),
         "echo": EchoAdapter(),
     }
 
@@ -55,6 +55,8 @@ def run_once_event_file(
     bot_user_id: str,
     watched_user_id: str | None = None,
     slack: ConsoleSlackClient | None = None,
+    verbose: bool = False,
+    output: OutputFn | None = None,
 ) -> RunOnceResult:
     payload = json.loads(event_file.read_text(encoding="utf-8"))
     return run_once_payload(
@@ -64,6 +66,8 @@ def run_once_event_file(
         bot_user_id=bot_user_id,
         watched_user_id=watched_user_id,
         slack=slack or ConsoleSlackClient(),
+        verbose=verbose,
+        output=output,
     )
 
 
@@ -76,6 +80,8 @@ def run_once_payload(
     watched_user_id: str | None = None,
     slack,
     adapters: dict[str, HarnessAdapter] | None = None,
+    verbose: bool = False,
+    output: OutputFn | None = None,
 ) -> RunOnceResult:
     return asyncio.run(
         process_payload(
@@ -86,6 +92,8 @@ def run_once_payload(
             watched_user_id=watched_user_id,
             slack=slack,
             adapters=adapters,
+            verbose=verbose,
+            output=output,
         )
     )
 
@@ -100,6 +108,7 @@ def run_once_socket(
     event_source=None,
     adapters: dict[str, HarnessAdapter] | None = None,
     output: OutputFn | None = None,
+    verbose: bool = False,
 ) -> RunOnceResult:
     return asyncio.run(
         _run_until_accepted_socket_async(
@@ -111,6 +120,7 @@ def run_once_socket(
             event_source=event_source,
             adapters=adapters,
             output=output,
+            verbose=verbose,
         )
     )
 
@@ -125,6 +135,7 @@ def run_forever_socket(
     event_source=None,
     adapters: dict[str, HarnessAdapter] | None = None,
     output: OutputFn = print,
+    verbose: bool = False,
 ) -> int:
     return asyncio.run(
         _run_forever_socket_async(
@@ -136,6 +147,7 @@ def run_forever_socket(
             event_source=event_source,
             adapters=adapters,
             output=output,
+            verbose=verbose,
         )
     )
 
@@ -150,6 +162,7 @@ async def _run_forever_socket_async(
     event_source,
     adapters: dict[str, HarnessAdapter] | None,
     output: OutputFn,
+    verbose: bool,
 ) -> int:
     accepted_count = 0
     seen_count = 0
@@ -164,6 +177,8 @@ async def _run_forever_socket_async(
                 slack=slack,
                 event_source=event_source,
                 adapters=adapters,
+                verbose=verbose,
+                output=output,
             )
         except KeyboardInterrupt:
             output(f"stopped after {accepted_count} accepted event(s)")
@@ -185,6 +200,8 @@ async def _run_once_socket_async(
     slack,
     event_source,
     adapters: dict[str, HarnessAdapter] | None,
+    verbose: bool = False,
+    output: OutputFn | None = None,
 ) -> RunOnceResult:
     workspace = workspace.resolve()
     config = read_workspace_config(workspace)
@@ -205,6 +222,8 @@ async def _run_once_socket_async(
         watched_user_id=selected_watched_user_id,
         slack=selected_slack,
         adapters=adapters,
+        verbose=verbose,
+        output=output,
     )
 
 
@@ -218,6 +237,7 @@ async def _run_until_accepted_socket_async(
     event_source,
     adapters: dict[str, HarnessAdapter] | None,
     output: OutputFn | None,
+    verbose: bool,
 ) -> RunOnceResult:
     while True:
         result = await _run_once_socket_async(
@@ -228,6 +248,8 @@ async def _run_until_accepted_socket_async(
             slack=slack,
             event_source=event_source,
             adapters=adapters,
+            verbose=verbose,
+            output=output,
         )
         if result.accepted:
             return result
@@ -244,6 +266,8 @@ async def process_payload(
     watched_user_id: str | None = None,
     slack,
     adapters: dict[str, HarnessAdapter] | None = None,
+    verbose: bool = False,
+    output: OutputFn | None = None,
 ) -> RunOnceResult:
     workspace = workspace.resolve()
     db_path = innie_dir(workspace) / "innie.db"
@@ -269,7 +293,7 @@ async def process_payload(
 
     manager = SessionManager(
         db_path,
-        adapters=adapters or adapter_map(),
+        adapters=adapters or adapter_map(verbose=verbose, output=output),
         slack=slack,
         workspace=workspace,
     )

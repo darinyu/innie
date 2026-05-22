@@ -158,6 +158,114 @@ class CodexCliAdapterTest(unittest.TestCase):
 
         self.assertEqual([("failed", "Codex exited with status 1: state warning; codex failed")], events)
 
+    def test_maps_responses_item_completed_assistant_message_to_output(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": "hello from codex"},
+                        ],
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[tuple[str, str | None]]:
+            handle = await adapter.start_task(request)
+            return [(event.type, event.message) async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertIn(("output", "hello from codex"), events)
+
+    def test_verbose_logs_unknown_codex_event_without_streaming_private_reasoning(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "mystery.reasoning_event",
+                    "summary": "visible summary",
+                    "chain_of_thought": "never show this",
+                },
+            ]
+        )
+        diagnostics: list[str] = []
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn, verbose=True, output=diagnostics.append)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> None:
+            handle = await adapter.start_task(request)
+            async for _event in adapter.stream_events(handle.task_id):
+                pass
+
+        asyncio.run(run())
+
+        self.assertIn("codex event ignored: type=mystery.reasoning_event", "\n".join(diagnostics))
+        self.assertNotIn("never show this", "\n".join(diagnostics))
+
+    def test_maps_codex_reasoning_summary_to_progress_not_private_reasoning(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "reasoning_summary_delta",
+                    "delta": "checking the repo",
+                    "chain_of_thought": "never show this",
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[tuple[str, str | None]]:
+            handle = await adapter.start_task(request)
+            return [(event.type, event.message) async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertIn(("progress", "Reasoning summary: checking the repo"), events)
+        self.assertNotIn("never show this", "\n".join(message or "" for _, message in events))
+
 
 if __name__ == "__main__":
     unittest.main()

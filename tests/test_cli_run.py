@@ -110,6 +110,15 @@ class CliRunTest(unittest.TestCase):
             self.assertIn(mock.call("Innie run starting: harness=echo once=True continuous=False", flush=True), print_mock.mock_calls)
             self.assertIn(mock.call("Socket Mode enabled; waiting for one accepted Slack event...", flush=True), print_mock.mock_calls)
 
+    def test_run_verbose_uses_rich_console_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            console = mock.Mock()
+            with mock.patch("innie.cli.run_once_socket", return_value=RunOnceResult(True, "accepted", "sess_1", session_status="new")):
+                with mock.patch("innie.cli.Console", return_value=console):
+                    self.assertEqual(0, main(["--workspace", tmp, "run", "--once", "--verbose", "--harness", "echo"]))
+
+            console.print.assert_any_call("Innie run starting: harness=echo once=True continuous=False", highlight=False)
+
 
 if __name__ == "__main__":
     unittest.main()
