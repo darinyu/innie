@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from innie.runner import ConsoleSlackClient, run_forever_socket, run_once_payload, run_once_socket
+from innie.runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_payload, run_once_socket
 
 
 def payload(text: str = "hello from slack") -> dict:
@@ -41,6 +41,7 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual("accepted", result.reason)
             self.assertIsNotNone(result.session_id)
             self.assertEqual("new", result.session_status)
+            self.assertEqual("echo", result.harness_id)
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
             self.assertIn("reaction D1 100.1 eyes", printed)
             self.assertIn("message D1 100.1 Done:\nhello from slack", printed)
@@ -182,6 +183,18 @@ class RunnerTest(unittest.TestCase):
                 "ignored event: not_for_innie event_id=Ignored1 type=message channel=C1 ts=200.1 user=U2 text=ambient channel chatter",
                 printed,
             )
+
+    def test_format_run_acceptance_includes_actual_session_harness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_once_payload(
+                Path(tmp),
+                payload(),
+                harness_id="echo",
+                bot_user_id="U_BOT",
+                slack=ConsoleSlackClient(output=lambda _line: None),
+            )
+
+        self.assertEqual(f"accepted new session {result.session_id} via echo", format_run_acceptance(result))
 
 
 if __name__ == "__main__":

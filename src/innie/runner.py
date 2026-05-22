@@ -26,6 +26,7 @@ class RunOnceResult:
     session_id: str | None = None
     payload: dict | None = None
     session_status: str | None = None
+    harness_id: str | None = None
 
 
 class ConsoleSlackClient:
@@ -168,7 +169,7 @@ async def _run_forever_socket_async(
         seen_count += 1
         if result.accepted:
             accepted_count += 1
-            output(f"accepted {result.session_status or 'unknown'} session {result.session_id}")
+            output(format_run_acceptance(result))
         else:
             output(f"ignored event: {result.reason} {describe_slack_payload(result.payload)}".rstrip())
 
@@ -247,7 +248,21 @@ async def process_payload(
         await manager.run_until_idle()
     finally:
         manager.close()
-    return RunOnceResult(True, accepted.decision.reason, accepted.session.id, payload=payload, session_status=session_status)
+    return RunOnceResult(
+        True,
+        accepted.decision.reason,
+        accepted.session.id,
+        payload=payload,
+        session_status=session_status,
+        harness_id=accepted.session.harness_id,
+    )
+
+
+def format_run_acceptance(result: RunOnceResult) -> str:
+    line = f"accepted {result.session_status or 'unknown'} session {result.session_id}"
+    if result.harness_id:
+        line = f"{line} via {result.harness_id}"
+    return line
 
 
 def _existing_session_id_for_payload(db, payload: dict) -> str | None:

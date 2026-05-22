@@ -8,7 +8,7 @@ from .config import innie_dir
 from .control import cancel_session, summarize_session
 from .db import connect, initialize_schema
 from .prompting import prompt_masked_secret
-from .runner import ConsoleSlackClient, run_forever_socket, run_once_event_file, run_once_socket
+from .runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_event_file, run_once_socket
 from .slack_setup import run_slack_setup
 
 
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_run(f"ignored event: {result.reason}")
             _print_run("processed one event; exiting because --once was set")
             return 0
-        _print_run(f"accepted {result.session_status or 'unknown'} session {result.session_id}")
+        _print_run(format_run_acceptance(result))
         _print_run(f"logs: innie --workspace {state_dir} logs {result.session_id}")
         _print_run("processed one event; exiting because --once was set")
         return 0
