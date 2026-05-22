@@ -71,7 +71,9 @@ class CliRunTest(unittest.TestCase):
             self.assertIn("Innie run starting", output)
             self.assertIn("waiting for one accepted Slack event", output)
             self.assertIn("accepted new session sess_1", output)
+            self.assertIn("run log:", output)
             self.assertIn("processed one accepted event; exiting because --once was set", output)
+            self.assertIn("accepted new session sess_1", (Path(tmp) / ".innie" / "logs" / "innie.log").read_text(encoding="utf-8"))
             run.assert_called_once()
 
     def test_run_once_defaults_to_codex_harness(self) -> None:

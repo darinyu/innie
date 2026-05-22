@@ -13,6 +13,7 @@ from .config import innie_dir
 from .control import cancel_session, summarize_session
 from .db import connect, initialize_schema
 from .prompting import prompt_masked_secret
+from .run_logging import RunLogger
 from .runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_event_file, run_once_socket
 from .slack_setup import run_slack_setup
 
@@ -115,9 +116,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
-        run_output = _run_output(verbose=args.verbose)
+        stdout_output = _run_output(verbose=args.verbose)
+        run_logger = RunLogger(state_dir, output=stdout_output)
+        run_output = run_logger.emit
         if args.event_file is not None and not args.once:
             parser.error("`innie run --event-file` requires --once")
+        run_output(f"run log: {run_logger.path}")
         run_output(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
         if args.event_file is None:
             if args.once:

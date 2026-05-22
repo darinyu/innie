@@ -196,6 +196,41 @@ class CodexCliAdapterTest(unittest.TestCase):
 
         self.assertIn(("output", "hello from codex"), events)
 
+    def test_maps_codex_item_completed_agent_message_to_output(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": "hello from agent item",
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[tuple[str, str | None]]:
+            handle = await adapter.start_task(request)
+            return [(event.type, event.message) async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertIn(("output", "hello from agent item"), events)
+
     def test_verbose_logs_unknown_codex_event_without_streaming_private_reasoning(self) -> None:
         process = FakeProcess(
             [
@@ -229,7 +264,8 @@ class CodexCliAdapterTest(unittest.TestCase):
 
         asyncio.run(run())
 
-        self.assertIn("codex event ignored: type=mystery.reasoning_event", "\n".join(diagnostics))
+        self.assertIn("codex task=task_1 event ignored: type=mystery.reasoning_event", "\n".join(diagnostics))
+        self.assertIn('"summary":"visible summary"', "\n".join(diagnostics))
         self.assertNotIn("never show this", "\n".join(diagnostics))
 
     def test_maps_codex_reasoning_summary_to_progress_not_private_reasoning(self) -> None:

@@ -77,7 +77,7 @@ class CodexCliAdapter:
             if event is not None:
                 yield event
             elif self._verbose and self._output is not None:
-                self._output(_describe_ignored_event(payload))
+                self._output(_describe_ignored_event(task_id, payload))
         returncode = await process.wait()
         stderr_task = self._stderr_tasks.pop(task_id, None)
         if stderr_task is not None:
@@ -148,9 +148,10 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
         return HarnessEvent(type="output", message=str(message) if message else None, payload=payload)
     if event_type in {"item.completed", "response.output_item.done"}:
         item = payload.get("item") or payload.get("output_item") or payload
-        if isinstance(item, dict) and item.get("role") == "assistant":
+        if isinstance(item, dict) and (item.get("role") == "assistant" or item.get("type") in {"agent_message", "assistant_message", "message"}):
             message = _extract_text(item)
-            return HarnessEvent(type="output", message=message, payload=payload)
+            if message:
+                return HarnessEvent(type="output", message=message, payload=payload)
     if event_type in {"token_count", "usage"}:
         return HarnessEvent(
             type="usage",
@@ -188,7 +189,30 @@ def _extract_text(value: Any) -> str | None:
     return None
 
 
-def _describe_ignored_event(payload: dict[str, Any]) -> str:
+def _describe_ignored_event(task_id: str, payload: dict[str, Any]) -> str:
     event_type = str(payload.get("type") or "unknown")
     keys = ", ".join(sorted(str(key) for key in payload.keys() if key not in {"chain_of_thought", "reasoning"}))
-    return f"codex event ignored: type={event_type} keys={keys}"
+    return f"codex task={task_id} event ignored: type={event_type} keys={keys} payload={_safe_json_preview(payload)}"
+
+
+def _safe_json_preview(value: Any, *, limit: int = 1200) -> str:
+    sanitized = _sanitize(value)
+    text = json.dumps(sanitized, sort_keys=True, separators=(",", ":"))
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _sanitize(value: Any) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text in {"chain_of_thought", "reasoning"}:
+                result[key_text] = "<redacted>"
+            else:
+                result[key_text] = _sanitize(item)
+        return result
+    if isinstance(value, list):
+        return [_sanitize(item) for item in value]
+    return value
