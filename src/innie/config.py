@@ -31,7 +31,15 @@ def write_secrets(workspace: Path, secrets: dict[str, str]) -> None:
     os.chmod(path, 0o600)
 
 
-def write_workspace_config(workspace: Path, *, app_id: str, bot_user_id: str, app_name: str) -> None:
+def write_workspace_config(
+    workspace: Path,
+    *,
+    app_id: str,
+    bot_user_id: str,
+    app_name: str,
+    trigger_mode: str | None = None,
+    watched_user_id: str | None = None,
+) -> None:
     path = config_path(workspace)
     path.parent.mkdir(parents=True, exist_ok=True)
     existing_harness = "null"
@@ -51,6 +59,8 @@ def write_workspace_config(workspace: Path, *, app_id: str, bot_user_id: str, ap
                 f"  app_id: {app_id}",
                 f"  bot_user_id: {bot_user_id}",
                 f"  app_name: {app_name}",
+                f"  trigger_mode: {trigger_mode or 'bot_mention'}",
+                f"  watched_user_id: {watched_user_id or 'null'}",
                 "harness:",
                 f"  selected: {existing_harness}",
                 "",

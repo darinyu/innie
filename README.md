@@ -74,6 +74,9 @@ innie init
 `innie init` checks local dependencies, creates durable local state in `.innie/`,
 and then starts the Slack setup wizard.
 
+For the guided Slack screenshots checklist, see
+[`docs/slack-setup.md`](docs/slack-setup.md).
+
 ## Dependencies
 
 Planned runtime dependencies:

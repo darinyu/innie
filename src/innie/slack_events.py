@@ -29,6 +29,7 @@ def normalize_slack_event(
     payload: dict[str, Any],
     *,
     bot_user_id: str,
+    watched_user_id: str | None = None,
     seen_event_ids: set[str] | None = None,
 ) -> SlackEventDecision:
     event_id = str(payload.get("event_id") or "")
@@ -60,6 +61,8 @@ def normalize_slack_event(
         trigger_type = "dm"
     elif event_type == "message" and f"<@{bot_user_id}>" in text:
         trigger_type = "channel_mention"
+    elif event_type == "message" and watched_user_id and f"<@{watched_user_id}>" in text:
+        trigger_type = "user_mention"
     else:
         return SlackEventDecision(False, "not_for_innie")
 

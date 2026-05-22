@@ -45,13 +45,13 @@ class SlackSetupTest(unittest.TestCase):
     def test_manual_setup_writes_manifest_config_and_restrictive_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
+            prompts: list[str] = []
             answers = iter(
                 [
-                    "innie",
-                    "Innie",
-                    "n",
-                    "manual",
-                    "n",
+                    "",
+                    "",
+                    "1",
+                    "",
                     "client-id",
                     "client-secret",
                     "",
@@ -63,8 +63,9 @@ class SlackSetupTest(unittest.TestCase):
             result = run_slack_setup(
                 workspace,
                 api=FakeSlackApi(),
-                prompt=lambda _text: next(answers),
-                prompt_secret=lambda _text: next(answers),
+                prompt=lambda text: prompts.append(text) or next(answers),
+                prompt_secret=lambda text: prompts.append(text) or next(answers),
+                oauth_timeout_seconds=0,
             )
 
             self.assertTrue(result.ok, result.messages)
@@ -79,6 +80,50 @@ class SlackSetupTest(unittest.TestCase):
             self.assertEqual("xapp-token", secrets["slack_app_token"])
             mode = os.stat(secrets_path).st_mode & 0o777
             self.assertEqual(0o600, mode)
+            prompt_text = "\n".join(prompts)
+            self.assertIn("Step 1/6", prompt_text)
+            self.assertIn("You can change these later", prompt_text)
+            self.assertIn("Mode 1", prompt_text)
+            self.assertIn("Mode 2", prompt_text)
+            self.assertIn("Client ID", prompt_text)
+            self.assertIn("Client Secret", prompt_text)
+            self.assertIn("App ID", prompt_text)
+            self.assertNotIn("OAuth callback mode", prompt_text)
+
+    def test_user_mention_mode_adds_channel_message_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            answers = iter(
+                [
+                    "support-innie",
+                    "Support Innie",
+                    "2",
+                    "U_DARIN",
+                    "",
+                    "client-id",
+                    "client-secret",
+                    "A123",
+                    "abc123",
+                    "xapp-token",
+                ]
+            )
+
+            result = run_slack_setup(
+                workspace,
+                api=FakeSlackApi(),
+                prompt=lambda _text: next(answers),
+                prompt_secret=lambda _text: next(answers),
+                oauth_timeout_seconds=0,
+            )
+
+            self.assertTrue(result.ok, result.messages)
+            manifest = json.loads((workspace / ".innie" / "slack-manifest.json").read_text())
+            events = manifest["settings"]["event_subscriptions"]["bot_events"]
+            self.assertIn("message.channels", events)
+            self.assertIn("message.groups", events)
+            config = (workspace / ".innie" / "config.yaml").read_text()
+            self.assertIn("trigger_mode: user_mention", config)
+            self.assertIn("watched_user_id: U_DARIN", config)
 
 
 if __name__ == "__main__":

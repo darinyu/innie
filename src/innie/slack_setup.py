@@ -124,6 +124,7 @@ def run_slack_setup(
     prompt: PromptFn = input,
     prompt_secret: SecretPromptFn | None = None,
     open_url: Callable[[str], None] | None = None,
+    oauth_timeout_seconds: int = 120,
 ) -> SlackSetupResult:
     api = api or SlackApi()
     prompt_secret = prompt_secret or prompt
@@ -142,11 +143,37 @@ def run_slack_setup(
         except Exception as exc:
             messages.append(f"Existing Slack token validation failed: {exc}")
 
-    app_name = prompt("Slack app name [innie]: ").strip() or "innie"
-    display_name = prompt("Bot display name [Innie]: ").strip() or "Innie"
-    include_channel_messages = _confirm(prompt, "Listen to all channel/group messages, not just mentions? [y/N] ")
-    callback_mode = prompt("OAuth callback mode: local, public, or manual [manual]: ").strip().lower() or "manual"
-    redirect_url = _resolve_redirect_url(callback_mode, prompt, messages)
+    messages.extend(
+        [
+            "Slack setup takes about 5-8 minutes.",
+            "Use docs/slack-setup.md if you want screenshots beside the wizard.",
+        ]
+    )
+    app_name = prompt(
+        "Step 1/6 - Name the Slack app (1 minute). "
+        "Default is `innie`; you can change these later in Slack app settings. "
+        "Slack app name [innie]: "
+    ).strip() or "innie"
+    display_name = prompt(
+        "Step 1/6 - Bot display name shown in Slack. "
+        "Default is `Innie`; You can change these later in Slack app settings. "
+        "Bot display name [Innie]: "
+    ).strip() or "Innie"
+    trigger_mode_choice = prompt(
+        "Step 2/6 - Choose when Innie should respond.\n"
+        "  Mode 1: respond when someone tags the bot, like @Innie.\n"
+        "  Mode 2: respond when someone tags you, like @Darin, in channels where the app is present.\n"
+        "Choose Mode 1 or Mode 2 [1]: "
+    ).strip() or "1"
+    trigger_mode = "user_mention" if trigger_mode_choice == "2" else "bot_mention"
+    watched_user_id = None
+    if trigger_mode == "user_mention":
+        watched_user_id = prompt(
+            "Step 2/6 - Copy your Slack member ID (profile -> three dots -> Copy member ID, about 3 clicks). "
+            "Your member ID, usually starts with U: "
+        ).strip()
+    include_channel_messages = trigger_mode == "user_mention"
+    redirect_url = _resolve_redirect_url(prompt, messages)
     manifest = build_manifest(
         app_name=app_name,
         display_name=display_name,
@@ -154,29 +181,41 @@ def run_slack_setup(
         include_channel_messages=include_channel_messages,
     )
 
-    auto_create = _confirm(prompt, "Create/update the Slack app manifest automatically? [y/N] ")
-    client_id = prompt("Slack client id: ").strip()
-    client_secret = prompt_secret("Slack client secret: ").strip()
-    app_id = prompt("Slack app id, if already known: ").strip()
+    manifest_path = workspace / ".innie" / "slack-manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    messages.append(f"Step 3/6 - Wrote Slack manifest for manual paste: {manifest_path}")
+    messages.append(
+        "In Slack API: Create New App -> From an app manifest -> paste this file. "
+        "This is usually 6 clicks and 2-3 minutes."
+    )
+    prompt(
+        "Step 3/6 - Create the Slack app from the generated manifest.\n"
+        f"  Manifest file: {manifest_path}\n"
+        "  In Slack API: Create New App -> From an app manifest -> paste this file.\n"
+        "  This is usually 6 clicks and 2-3 minutes.\n"
+        "Press Enter after the Slack app is created from the manifest."
+    )
 
-    if auto_create:
-        config_token = prompt_secret("One-time Slack App Configuration token: ").strip()
-        result = api.post_json("apps.manifest.create", config_token, {"manifest": manifest})
-        app_id = result.get("app_id") or app_id
-        credentials = result.get("credentials", {})
-        client_id = credentials.get("client_id") or client_id
-        client_secret = credentials.get("client_secret") or client_secret
-        messages.append("Created Slack app from generated manifest. The configuration token was not stored.")
-    else:
-        manifest_path = workspace / ".innie" / "slack-manifest.json"
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        messages.append(f"Wrote Slack manifest for manual paste: {manifest_path}")
+    client_id = prompt(
+        "Step 4/6 - In Slack API, open Basic Information -> App Credentials "
+        "(about 2 clicks). Copy Client ID: "
+    ).strip()
+    client_secret = prompt_secret("Step 4/6 - Copy Client Secret: ").strip()
+    app_id = prompt("Step 4/6 - Copy App ID (optional but useful): ").strip()
 
     oauth_url = _oauth_url(client_id, BOT_SCOPES, redirect_url)
+    messages.append("Step 5/6 - OAuth install. This opens a local callback server on localhost:8765.")
+    messages.append("If the callback page cannot reach this machine, copy the final URL from your browser.")
     messages.append(f"Open Slack OAuth URL: {oauth_url}")
     open_url(oauth_url)
-    code = _collect_oauth_code(callback_mode, redirect_url, prompt, messages)
+    code = _collect_oauth_code(
+        redirect_url,
+        oauth_url,
+        prompt,
+        messages,
+        timeout_seconds=oauth_timeout_seconds,
+    )
     oauth_result = api.post_form(
         "oauth.v2.access",
         {
@@ -194,7 +233,10 @@ def run_slack_setup(
     auth = api.post_json("auth.test", bot_token, {})
     bot_user_id = auth.get("user_id", "")
 
-    xapp_token = prompt_secret("App-level Socket Mode token with connections:write (xapp-...): ").strip()
+    xapp_token = prompt_secret(
+        "Step 6/6 - In Basic Information -> App-Level Tokens, Generate Token and Scopes "
+        "(about 4 clicks). Add `connections:write`, then paste xapp- token: "
+    ).strip()
     if not xapp_token.startswith("xapp-"):
         return SlackSetupResult(ok=False, messages=messages + ["App-level token must start with xapp-."])
     api.post_json("apps.connections.open", xapp_token, {})
@@ -209,7 +251,14 @@ def run_slack_setup(
             "slack_client_secret": client_secret,
         },
     )
-    write_workspace_config(workspace, app_id=app_id, bot_user_id=bot_user_id, app_name=app_name)
+    write_workspace_config(
+        workspace,
+        app_id=app_id,
+        bot_user_id=bot_user_id,
+        app_name=app_name,
+        trigger_mode=trigger_mode,
+        watched_user_id=watched_user_id,
+    )
     messages.append("Saved Slack tokens with restrictive file permissions.")
     messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
     return SlackSetupResult(ok=True, messages=messages)
@@ -219,29 +268,27 @@ def _confirm(prompt: PromptFn, text: str) -> bool:
     return prompt(text).strip().lower() in {"y", "yes"}
 
 
-def _resolve_redirect_url(callback_mode: str, prompt: PromptFn, messages: list[str]) -> str:
-    if callback_mode == "public":
-        return prompt("Public OAuth callback URL: ").strip()
-    if callback_mode == "local":
-        port_text = prompt("Local OAuth callback port [8765]: ").strip() or "8765"
-        port = int(port_text)
-        if _port_in_use(port):
-            answer = prompt(f"Port {port} is busy. Continue without killing it? [y/N] ").strip().lower()
-            if answer not in {"y", "yes"}:
-                raise SlackApiError(f"Port {port} is busy.")
-        return f"http://localhost:{port}/callback"
-    messages.append(
-        "Manual OAuth mode: Slack may redirect to localhost and fail to load in remote-dev environments. "
-        "Copy the final callback URL or the code query parameter back into this wizard."
-    )
-    return "http://localhost:8765/callback"
+def _resolve_redirect_url(prompt: PromptFn, messages: list[str]) -> str:
+    port = 8765
+    if _port_in_use(port):
+        answer = prompt(
+            "Step 5/6 - Local OAuth callback port 8765 is busy. "
+            "Continue and use copy/paste fallback if the callback cannot bind? [Y/n] "
+        ).strip().lower()
+        if answer in {"n", "no"}:
+            raise SlackApiError("Port 8765 is busy.")
+        messages.append("Port 8765 is busy; OAuth will use copy/paste fallback if needed.")
+    return f"http://localhost:{port}/callback"
 
 
-def _collect_oauth_code(callback_mode: str, redirect_url: str, prompt: PromptFn, messages: list[str]) -> str:
-    if callback_mode != "local":
-        value = prompt("Paste final callback URL or OAuth code: ").strip()
-        return _extract_code(value)
-
+def _collect_oauth_code(
+    redirect_url: str,
+    oauth_url: str,
+    prompt: PromptFn,
+    messages: list[str],
+    *,
+    timeout_seconds: int,
+) -> str:
     result: dict[str, str] = {}
     parsed = parse.urlparse(redirect_url)
     port = parsed.port or 8765
@@ -259,16 +306,34 @@ def _collect_oauth_code(callback_mode: str, redirect_url: str, prompt: PromptFn,
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             return
 
-    server = http.server.HTTPServer(("localhost", port), Handler)
+    try:
+        server = http.server.HTTPServer(("localhost", port), Handler)
+    except OSError:
+        value = prompt(
+            "Step 5/6 - Local callback could not start.\n"
+            f"  Open this URL: {oauth_url}\n"
+            "  Paste final callback URL or OAuth code from your browser: "
+        ).strip()
+        return _extract_code(value)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    messages.append(f"Waiting up to 120 seconds for OAuth callback on localhost:{port}.")
-    deadline = time.monotonic() + 120
+    pasted = prompt(
+        "Step 5/6 - Install the app with OAuth.\n"
+        f"  Open this URL: {oauth_url}\n"
+        "  If your browser can reach localhost, approve the app and press Enter here.\n"
+        "  If the browser cannot reach localhost, paste the final callback URL or OAuth code here: "
+    ).strip()
+    if pasted:
+        server.shutdown()
+        return _extract_code(pasted)
+    messages.append(f"Waiting up to {timeout_seconds} seconds for OAuth callback on localhost:{port}.")
+    messages.append("Remote/cloud users: if the browser fails to load localhost, copy the full URL and paste it here.")
+    deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline and "code" not in result:
         time.sleep(0.1)
     if "code" not in result:
         server.shutdown()
-        value = prompt("Local callback timed out. Paste final callback URL or OAuth code: ").strip()
+        value = prompt("Step 5/6 - Paste final callback URL or OAuth code from your browser: ").strip()
         return _extract_code(value)
     return result["code"]
 

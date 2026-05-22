@@ -64,6 +64,24 @@ class SlackEventIntakeTest(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertEqual("not_for_innie", decision.reason)
 
+    def test_accepts_watched_user_mention_when_configured(self) -> None:
+        payload = {
+            "event_id": "EvUserMention",
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "171.5",
+                "text": "<@U_DARIN> can you look?",
+            },
+        }
+
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", watched_user_id="U_DARIN")
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual("user_mention", decision.trigger.trigger_type)
+
     def test_rejects_self_echo_and_duplicate_retry(self) -> None:
         payload = {
             "event_id": "Ev4",

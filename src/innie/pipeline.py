@@ -24,12 +24,18 @@ def accept_slack_event(
     bot_user_id: str,
     slack: SlackReactionClient,
     harness_id: str | None = None,
+    watched_user_id: str | None = None,
 ) -> AcceptedSlackEvent:
     seen = {
         row["slack_event_id"]
         for row in db.execute("SELECT slack_event_id FROM slack_triggers")
     }
-    decision = normalize_slack_event(payload, bot_user_id=bot_user_id, seen_event_ids=seen)
+    decision = normalize_slack_event(
+        payload,
+        bot_user_id=bot_user_id,
+        watched_user_id=watched_user_id,
+        seen_event_ids=seen,
+    )
     if not decision.accepted or decision.trigger is None:
         return AcceptedSlackEvent(decision)
 
