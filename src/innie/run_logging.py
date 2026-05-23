@@ -25,15 +25,18 @@ class RunLogger:
         self._backup_count = backup_count
 
     def emit(self, message: str) -> None:
-        self._output(message)
-        self._write(message)
+        line = f"{self._timestamp()} {message}"
+        self._output(line)
+        self._write(line)
 
-    def _write(self, message: str) -> None:
+    def _write(self, line: str) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._rotate_if_needed(len(message.encode("utf-8")) + 64)
-        timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        self._rotate_if_needed(len(line.encode("utf-8")) + 1)
         with self.path.open("a", encoding="utf-8") as log_file:
-            log_file.write(f"{timestamp} {message}\n")
+            log_file.write(f"{line}\n")
+
+    def _timestamp(self) -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     def _rotate_if_needed(self, incoming_bytes: int) -> None:
         if self._max_bytes <= 0 or not self.path.exists():
