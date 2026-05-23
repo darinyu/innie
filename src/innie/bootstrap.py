@@ -11,7 +11,7 @@ from typing import Callable
 from .db import connect, initialize_schema
 
 
-SUPPORTED_HARNESSES = ("codex", "claude", "opencode", "goose")
+SUPPORTED_HARNESSES = ("codex",)
 MIN_PYTHON = (3, 10)
 CONFIG_TEMPLATE = """# Innie local workspace config.
 # Non-secret metadata belongs here. Tokens should be stored separately.
@@ -76,7 +76,7 @@ def check_dependencies(workspace: Path) -> list[DependencyStatus]:
         DependencyStatus(
             name="agent_harness",
             ok=bool(found_harnesses),
-            detail=", ".join(found_harnesses) if found_harnesses else "none found: codex, claude, opencode, goose",
+            detail=", ".join(found_harnesses) if found_harnesses else "none found: codex",
             required=False,
         )
     )

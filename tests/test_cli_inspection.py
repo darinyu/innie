@@ -8,9 +8,11 @@ import unittest
 
 from innie.cli import main
 from innie.db import connect, initialize_schema
+from innie.harness import HarnessArtifact, HarnessCapabilities, HarnessEvent
 from innie.inbox import enqueue_trigger
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
+from innie.tasks import append_harness_event, create_task, record_adapter_capabilities, record_artifacts, set_task_status
 
 
 def seed_session(workspace: Path) -> str:
@@ -29,8 +31,19 @@ def seed_session(workspace: Path) -> str:
         payload={"event_id": "Ev1"},
     )
     persist_trigger(db, trigger)
-    session = resolve_session_for_trigger(db, trigger)
+    session = resolve_session_for_trigger(db, trigger, harness_id="codex")
     enqueue_trigger(db, session=session, trigger=trigger)
+    task = create_task(
+        db,
+        session_id=session.id,
+        goal="work",
+        output_target=session.output_target,
+        harness_id="codex",
+    )
+    append_harness_event(db, task, HarnessEvent(type="progress", message="running tests"))
+    set_task_status(db, task.id, "running")
+    record_artifacts(db, task, [HarnessArtifact(kind="summary", path="summary.md")])
+    record_adapter_capabilities(db, "codex", HarnessCapabilities(supports_streaming=True))
     db.commit()
     db.close()
     return session.id
@@ -52,6 +65,10 @@ class CliInspectionTest(unittest.TestCase):
                 self.assertEqual(0, main(["--workspace", str(workspace), "logs", session_id]))
             self.assertIn("inbox:", logs_out.getvalue())
             self.assertIn("work", logs_out.getvalue())
+            self.assertIn("tasks:", logs_out.getvalue())
+            self.assertIn("artifacts:", logs_out.getvalue())
+            self.assertIn("harness_capabilities:", logs_out.getvalue())
+            self.assertIn("codex", logs_out.getvalue())
 
             cancel_out = StringIO()
             with redirect_stdout(cancel_out):

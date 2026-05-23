@@ -5,7 +5,7 @@ import sqlite3
 from typing import Any
 
 from .hooks import SlackReactionClient, run_trigger_accepted_hook
-from .inbox import InboxRow, enqueue_trigger
+from .inbox import InboxRow, enqueue_trigger, find_row_for_trigger_message
 from .sessions import SessionRecord, resolve_session_for_trigger
 from .slack_events import SlackEventDecision, normalize_slack_event, persist_trigger
 
@@ -30,14 +30,28 @@ def accept_slack_event(
         row["slack_event_id"]
         for row in db.execute("SELECT slack_event_id FROM slack_triggers")
     }
+    known_thread_roots = {
+        (row["slack_channel_id"], row["slack_root_ts"])
+        for row in db.execute(
+            """
+            SELECT slack_channel_id, slack_root_ts
+            FROM sessions
+            WHERE slack_channel_id IS NOT NULL AND slack_root_ts IS NOT NULL
+            """
+        )
+    }
     decision = normalize_slack_event(
         payload,
         bot_user_id=bot_user_id,
         watched_user_id=watched_user_id,
         seen_event_ids=seen,
+        known_thread_roots=known_thread_roots,
     )
     if not decision.accepted or decision.trigger is None:
         return AcceptedSlackEvent(decision)
+
+    if find_row_for_trigger_message(db, trigger=decision.trigger) is not None:
+        return AcceptedSlackEvent(SlackEventDecision(False, "duplicate_retry"))
 
     persist_trigger(db, decision.trigger)
     session = resolve_session_for_trigger(db, decision.trigger, harness_id=harness_id)

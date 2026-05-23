@@ -3,11 +3,19 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+try:
+    from rich.console import Console
+except ImportError:  # pragma: no cover - exercised when rich is not installed
+    Console = None
+
 from .bootstrap import init_workspace
+from .cleanup import apply_cleanup, format_cleanup_preview, preview_cleanup
 from .config import innie_dir
 from .control import cancel_session, summarize_session
 from .db import connect, initialize_schema
 from .prompting import prompt_masked_secret
+from .run_logging import RunLogger
+from .runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_event_file, run_once_socket
 from .slack_setup import run_slack_setup
 
 
@@ -53,6 +61,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     cancel_parser = subparsers.add_parser("cancel", help="Cancel a durable session")
     cancel_parser.add_argument("session_id")
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup",
+        help="Preview or delete old completed local task state; dry run is the default",
+        description=(
+            "Preview or delete completed local task state older than 30 days. "
+            "Dry run is the default; pass --apply to delete."
+        ),
+    )
+    cleanup_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete eligible local state. Without this flag cleanup only previews old completed tasks.",
+    )
+
+    run_parser = subparsers.add_parser("run", help="Run Innie against Slack or one Slack-shaped event")
+    run_parser.add_argument("--once", action="store_true", help="Process one event and exit")
+    run_parser.add_argument("--event-file", type=Path, default=None, help="Slack event payload JSON file")
+    run_parser.add_argument("--harness", choices=("echo", "codex"), default="codex", help="Harness adapter to use")
+    run_parser.add_argument("--max-workers", type=int, default=7, help="Maximum concurrent harness workers")
+    run_parser.add_argument("--bot-user-id", default="U_BOT", help="Bot user id for local event-file runs")
+    run_parser.add_argument("--watched-user-id", default=None, help="Optional watched user id for mention mode")
+    run_parser.add_argument("--verbose", action="store_true", help="Print verbose runtime diagnostics")
 
     return parser
 
@@ -100,6 +131,68 @@ def main(argv: list[str] | None = None) -> int:
             print(cancel_session(db, args.session_id))
         return 0
 
+    if args.command == "cleanup":
+        with _open_workspace_db(state_dir) as db:
+            if args.apply:
+                print(format_cleanup_preview(apply_cleanup(db, state_dir), applied=True))
+            else:
+                print(format_cleanup_preview(preview_cleanup(db, state_dir)))
+        return 0
+
+    if args.command == "run":
+        stdout_output = _run_output(verbose=args.verbose)
+        run_logger = RunLogger(state_dir, output=stdout_output)
+        run_output = run_logger.emit
+        if args.event_file is not None and not args.once:
+            parser.error("`innie run --event-file` requires --once")
+        run_output(f"run log: {run_logger.path}")
+        run_output(f"Innie run starting: harness={args.harness} once={args.once} continuous={not args.once}")
+        if args.event_file is None:
+            if args.once:
+                run_output("Socket Mode enabled; waiting for one accepted Slack event...")
+                result = run_once_socket(
+                    state_dir,
+                    harness_id=args.harness,
+                    bot_user_id=None if args.bot_user_id == "U_BOT" else args.bot_user_id,
+                    watched_user_id=args.watched_user_id,
+                    output=run_output,
+                    verbose=args.verbose,
+                    max_workers=args.max_workers,
+                )
+            else:
+                run_output("Socket Mode enabled; listening until interrupted with Ctrl-C...")
+                run_forever_socket(
+                    state_dir,
+                    harness_id=args.harness,
+                    bot_user_id=None if args.bot_user_id == "U_BOT" else args.bot_user_id,
+                    watched_user_id=args.watched_user_id,
+                    output=run_output,
+                    verbose=args.verbose,
+                    max_workers=args.max_workers,
+                )
+                return 0
+        else:
+            run_output(f"Reading one Slack event from {args.event_file}")
+            result = run_once_event_file(
+                state_dir,
+                args.event_file,
+                harness_id=args.harness,
+                bot_user_id=args.bot_user_id,
+                watched_user_id=args.watched_user_id,
+                slack=ConsoleSlackClient(),
+                verbose=args.verbose,
+                output=run_output,
+                max_workers=args.max_workers,
+            )
+        if not result.accepted:
+            run_output(f"ignored event: {result.reason}")
+            run_output("processed one event-file event; exiting because --once was set")
+            return 0
+        run_output(format_run_acceptance(result))
+        run_output(f"logs: innie --workspace {state_dir} logs {result.session_id}")
+        run_output("processed one accepted event; exiting because --once was set")
+        return 0
+
     parser.error(f"unsupported command: {args.command}")
     return 2
 
@@ -115,6 +208,21 @@ def _open_workspace_db(workspace: Path):
 
 def _confirm_default_yes(prompt: str) -> bool:
     return input(prompt).strip().lower() not in {"n", "no"}
+
+
+def _print_run(message: str) -> None:
+    print(message, flush=True)
+
+
+def _run_output(*, verbose: bool):
+    if not verbose or Console is None:
+        return _print_run
+    console = Console()
+
+    def output(message: str) -> None:
+        console.print(message, highlight=False)
+
+    return output
 
 
 def _format_logs(db, session_id: str) -> str:
@@ -144,10 +252,27 @@ def _format_logs(db, session_id: str) -> str:
     if not inbox_rows:
         lines.append("  none")
 
+    lines.extend(["", "tasks:"])
+    task_rows = db.execute(
+        """
+        SELECT id, status, harness_id, execution_mode, goal
+        FROM tasks
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    lines.extend(
+        f"  {row['id']} {row['status']} {row['harness_id']} {row['execution_mode']} {row['goal']}"
+        for row in task_rows
+    )
+    if not task_rows:
+        lines.append("  none")
+
     lines.extend(["", "task_events:"])
     task_rows = db.execute(
         """
-        SELECT id, event_type, created_at, payload_json
+        SELECT id, task_id, event_type, created_at, payload_json
         FROM task_events
         WHERE session_id = ?
         ORDER BY id ASC
@@ -155,7 +280,7 @@ def _format_logs(db, session_id: str) -> str:
         (session_id,),
     ).fetchall()
     lines.extend(
-        f"  #{row['id']} {row['created_at']} {row['event_type']} {row['payload_json']}"
+        f"  #{row['id']} task={row['task_id'] or 'none'} {row['created_at']} {row['event_type']} {row['payload_json']}"
         for row in task_rows
     )
     if not task_rows:
@@ -177,6 +302,38 @@ def _format_logs(db, session_id: str) -> str:
         for row in hook_rows
     )
     if not hook_rows:
+        lines.append("  none")
+
+    lines.extend(["", "artifacts:"])
+    artifact_rows = db.execute(
+        """
+        SELECT id, task_id, kind, path, metadata_json
+        FROM artifacts
+        WHERE session_id = ?
+        ORDER BY id ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    lines.extend(
+        f"  #{row['id']} task={row['task_id'] or 'none'} {row['kind']} {row['path']} {row['metadata_json']}"
+        for row in artifact_rows
+    )
+    if not artifact_rows:
+        lines.append("  none")
+
+    lines.extend(["", "harness_capabilities:"])
+    capability_rows = db.execute(
+        """
+        SELECT DISTINCT hc.harness_id, hc.capabilities_json
+        FROM harness_capabilities hc
+        JOIN tasks t ON t.harness_id = hc.harness_id
+        WHERE t.session_id = ?
+        ORDER BY hc.harness_id ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    lines.extend(f"  {row['harness_id']} {row['capabilities_json']}" for row in capability_rows)
+    if not capability_rows:
         lines.append("  none")
 
     return "\n".join(lines)

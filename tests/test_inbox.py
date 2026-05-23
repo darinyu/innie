@@ -5,7 +5,14 @@ import tempfile
 import unittest
 
 from innie.db import connect, initialize_schema
-from innie.inbox import claim_next_inbox_row, enqueue_trigger, mark_inbox_done, queued_inbox_rows
+from innie.inbox import (
+    claim_next_available_inbox_row,
+    claim_next_inbox_row,
+    enqueue_trigger,
+    mark_inbox_done,
+    queued_inbox_rows,
+    release_session_lock,
+)
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
 
@@ -58,6 +65,78 @@ class InboxTest(unittest.TestCase):
             sessions = db.execute("SELECT id FROM sessions ORDER BY slack_channel_id").fetchall()
             self.assertEqual("one", claim_next_inbox_row(db, sessions[0]["id"]).text)
             self.assertEqual("two", claim_next_inbox_row(db, sessions[1]["id"]).text)
+
+    def test_global_claim_skips_locked_session_and_claims_next_eligible_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(Path(tmp) / "innie.db")
+            initialize_schema(db)
+            old_locked = make_trigger("Ev1", "D1", "100.1", "old locked")
+            newer = make_trigger("Ev2", "D2", "200.1", "newer")
+            for item in (old_locked, newer):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item)
+                enqueue_trigger(db, session=session, trigger=item)
+
+            locked_session_id = db.execute(
+                "SELECT id FROM sessions WHERE slack_channel_id = 'D1'"
+            ).fetchone()["id"]
+            db.execute(
+                """
+                UPDATE sessions
+                SET locked_by = 'worker-busy',
+                    locked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+60 seconds')
+                WHERE id = ?
+                """,
+                (locked_session_id,),
+            )
+
+            claimed = claim_next_available_inbox_row(db, worker_id="worker-1")
+
+            self.assertIsNotNone(claimed)
+            self.assertEqual("newer", claimed.text)
+            row = db.execute(
+                """
+                SELECT i.status AS inbox_status, s.locked_by
+                FROM session_inbox i
+                JOIN sessions s ON s.id = i.session_id
+                WHERE i.id = ?
+                """,
+                (claimed.id,),
+            ).fetchone()
+            self.assertEqual("processing", row["inbox_status"])
+            self.assertEqual("worker-1", row["locked_by"])
+
+    def test_global_claim_reuses_expired_session_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(Path(tmp) / "innie.db")
+            initialize_schema(db)
+            item = make_trigger("Ev1", "D1", "100.1", "stale")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item)
+            enqueue_trigger(db, session=session, trigger=item)
+            db.execute(
+                """
+                UPDATE sessions
+                SET locked_by = 'dead-worker',
+                    locked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-120 seconds'),
+                    lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-60 seconds')
+                WHERE id = ?
+                """,
+                (session.id,),
+            )
+
+            claimed = claim_next_available_inbox_row(db, worker_id="worker-1")
+
+            self.assertIsNotNone(claimed)
+            self.assertEqual("stale", claimed.text)
+            row = db.execute("SELECT locked_by FROM sessions WHERE id = ?", (session.id,)).fetchone()
+            self.assertEqual("worker-1", row["locked_by"])
+
+            release_session_lock(db, session.id, worker_id="worker-1")
+            row = db.execute("SELECT locked_by, lock_expires_at FROM sessions WHERE id = ?", (session.id,)).fetchone()
+            self.assertIsNone(row["locked_by"])
+            self.assertIsNone(row["lock_expires_at"])
 
 
 if __name__ == "__main__":

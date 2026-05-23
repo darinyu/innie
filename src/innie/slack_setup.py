@@ -114,7 +114,7 @@ def build_manifest(
             "event_subscriptions": {
                 "bot_events": events,
             },
-            "interactivity": {"is_enabled": False},
+            "interactivity": {"is_enabled": True},
             "org_deploy_enabled": False,
             "socket_mode_enabled": True,
             "token_rotation_enabled": False,
@@ -289,8 +289,8 @@ def run_slack_setup(
     )
     messages.append("Saved Slack tokens with restrictive file permissions.")
     messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
-    messages.append("Next: run `innie status <session-id>` or `innie logs <session-id>` after sessions exist.")
-    messages.append("Live Slack listening will be available when `innie run` lands in the next milestone.")
+    messages.append("Next: run `innie run --once --harness codex` and send one Slack DM or mention.")
+    messages.append("After a session exists, inspect it with `innie status <session-id>` or `innie logs <session-id>`.")
     return SlackSetupResult(ok=True, messages=messages)
 
 

@@ -13,7 +13,9 @@ class InboxRow:
     id: int
     session_id: str
     slack_event_id: str | None
+    slack_channel_id: str
     slack_message_ts: str
+    slack_thread_ts: str | None
     status: str
     text: str
 
@@ -46,6 +48,27 @@ def enqueue_trigger(db: sqlite3.Connection, *, session: SessionRecord, trigger: 
         ),
     )
     return _row_for_event(db, session.id, trigger.event_id)
+
+
+def find_row_for_trigger_message(db: sqlite3.Connection, *, trigger: SlackTrigger) -> InboxRow | None:
+    row = db.execute(
+        """
+        SELECT i.*
+        FROM session_inbox i
+        JOIN sessions s ON s.id = i.session_id
+        WHERE s.slack_channel_id = ?
+          AND s.slack_root_ts = ?
+          AND i.slack_channel_id = ?
+          AND i.slack_message_ts = ?
+        """,
+        (
+            trigger.channel_id,
+            trigger.thread_ts or trigger.message_ts,
+            trigger.channel_id,
+            trigger.message_ts,
+        ),
+    ).fetchone()
+    return _to_inbox_row(row) if row is not None else None
 
 
 def queued_inbox_rows(db: sqlite3.Connection, session_id: str) -> list[InboxRow]:
@@ -83,6 +106,114 @@ def claim_next_inbox_row(db: sqlite3.Connection, session_id: str) -> InboxRow | 
     return _to_inbox_row(db.execute("SELECT * FROM session_inbox WHERE id = ?", (row["id"],)).fetchone())
 
 
+def claim_next_available_inbox_row(
+    db: sqlite3.Connection,
+    *,
+    worker_id: str,
+    lease_seconds: int = 120,
+) -> InboxRow | None:
+    row = db.execute(
+        """
+        SELECT i.*
+        FROM session_inbox i
+        JOIN sessions s ON s.id = i.session_id
+        WHERE i.status = 'queued'
+          AND (
+            s.locked_by IS NULL
+            OR s.lock_expires_at IS NULL
+            OR s.lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          )
+        ORDER BY i.id ASC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        return None
+
+    updated_session = db.execute(
+        """
+        UPDATE sessions
+        SET locked_by = ?,
+            locked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+            status = 'running',
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?
+          AND (
+            locked_by IS NULL
+            OR lock_expires_at IS NULL
+            OR lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          )
+        """,
+        (worker_id, f"+{lease_seconds} seconds", row["session_id"]),
+    ).rowcount
+    if updated_session != 1:
+        return None
+
+    updated_inbox = db.execute(
+        """
+        UPDATE session_inbox
+        SET status = 'processing'
+        WHERE id = ? AND status = 'queued'
+        """,
+        (row["id"],),
+    ).rowcount
+    if updated_inbox != 1:
+        release_session_lock(db, row["session_id"], worker_id=worker_id)
+        return None
+
+    claimed = db.execute("SELECT * FROM session_inbox WHERE id = ?", (row["id"],)).fetchone()
+    return _to_inbox_row(claimed)
+
+
+def renew_session_lock(
+    db: sqlite3.Connection,
+    session_id: str,
+    *,
+    worker_id: str,
+    lease_seconds: int = 120,
+) -> bool:
+    return (
+        db.execute(
+            """
+            UPDATE sessions
+            SET lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ? AND locked_by = ?
+            """,
+            (f"+{lease_seconds} seconds", session_id, worker_id),
+        ).rowcount
+        == 1
+    )
+
+
+def release_session_lock(db: sqlite3.Connection, session_id: str, *, worker_id: str | None = None) -> None:
+    if worker_id is None:
+        db.execute(
+            """
+            UPDATE sessions
+            SET locked_by = NULL,
+                locked_at = NULL,
+                lock_expires_at = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?
+            """,
+            (session_id,),
+        )
+        return
+    db.execute(
+        """
+        UPDATE sessions
+        SET locked_by = NULL,
+            locked_at = NULL,
+            lock_expires_at = NULL,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ? AND locked_by = ?
+        """,
+        (session_id, worker_id),
+    )
+
+
 def mark_inbox_done(db: sqlite3.Connection, inbox_id: int) -> None:
     db.execute(
         """
@@ -110,7 +241,9 @@ def _to_inbox_row(row: sqlite3.Row) -> InboxRow:
         id=row["id"],
         session_id=row["session_id"],
         slack_event_id=row["slack_event_id"],
+        slack_channel_id=row["slack_channel_id"],
         slack_message_ts=row["slack_message_ts"],
+        slack_thread_ts=row["slack_thread_ts"],
         status=row["status"],
         text=row["text"],
     )

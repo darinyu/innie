@@ -5,8 +5,8 @@
 **Every worker deserves an innie: an AI work-self you can trigger from Slack.**
 
 > Innie is an early prototype. The repo contains the first local setup,
-> Slack setup, durable state, hooks, session inspection, and runtime building
-> blocks, but it is not production-ready yet.
+> Slack setup, durable state, hooks, session inspection, Codex and echo adapter
+> paths, and runtime building blocks, but it is not production-ready yet.
 
 ![Innie Slack-to-agent workflow](assets/demo/innie-flow.gif)
 
@@ -43,12 +43,14 @@ shape, and adapter contracts to change.
 
 - `innie init` creates local Innie state and can launch Slack setup.
 - `innie slack setup` guides Slack app manifest, OAuth, and Socket Mode setup.
+- `innie run` can process one routed event or run continuously.
 - Local durable state is stored under `.innie/`.
 - Slack-triggered messages can be accepted, attached to durable sessions, and
   queued for session work.
 - Codex is the first harness path.
-- Session status, logs, cancel, inbox, runtime, and lifecycle hook primitives
-  exist in the codebase.
+- Echo is available as a diagnostic adapter for local routing tests.
+- Session status, logs, cancel, inbox, runtime, progress, and lifecycle hook
+  primitives exist in the codebase.
 - Unit and acceptance tests cover the current prototype behavior.
 
 ### In Progress
@@ -117,6 +119,35 @@ innie slack setup
 For the guided Slack checklist, see
 [`docs/slack-setup.md`](docs/slack-setup.md).
 
+## Run
+
+Test the local route without Slack by feeding one Slack-shaped event file through
+the diagnostic echo adapter:
+
+```bash
+innie run --once --event-file event.json --harness echo
+```
+
+After `innie slack setup`, test one real Slack-routed Codex event and exit:
+
+```bash
+innie run --once --harness codex
+```
+
+`--once` is a smoke-test mode: Innie connects, waits for one routed Slack event,
+processes it, prints the session id and log command, then exits.
+
+Run continuously with:
+
+```bash
+innie run
+```
+
+Stop it with Ctrl-C.
+
+Use `--harness echo` when you want to debug Slack routing without starting
+Codex.
+
 ## Development
 
 Innie is a Python project built with Hatchling.
@@ -142,14 +173,13 @@ architecture plan.
 
 - Python 3.10+.
 - SQLite 3 for local durable session state.
+- Rich for colored, wrapped terminal setup screens. `scripts/install.py` asks
+  before installing it, and Innie falls back to plain text if you skip it.
 - A Slack app for DM and channel mention triggers.
-- At least one installed agent harness, such as Codex CLI, Claude Code,
-  OpenCode, Goose, or a custom runtime.
+- Codex CLI. V0 supports Codex; Claude Code, OpenCode, Goose, and custom
+  runtimes are future adapters.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
   environment.
-
-`scripts/install.py` can install Rich for colored, wrapped setup screens. Innie
-falls back to plain text if Rich is not installed.
 
 ## Local State And Secrets
 
@@ -179,7 +209,7 @@ Good first areas:
 
 - Tighten the Slack onboarding flow.
 - Improve setup validation and error messages.
-- Add focused tests for session, hook, and runtime behavior.
+- Add focused tests for session, hook, runtime, and adapter behavior.
 - Implement or refine a harness adapter.
 - Improve observability events and status output.
 - Refine docs, logo assets, and demo materials.

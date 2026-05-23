@@ -6,9 +6,11 @@ import unittest
 
 from innie.control import cancel_session, handle_control_message, summarize_session
 from innie.db import connect, initialize_schema
+from innie.harness import HarnessEvent
 from innie.inbox import enqueue_trigger
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
+from innie.tasks import append_harness_event, create_task, set_task_status
 
 
 class FakeSlackReplies:
@@ -42,6 +44,15 @@ class ControlTest(unittest.TestCase):
             db = connect(Path(tmp) / "innie.db")
             initialize_schema(db)
             session = make_session(db)
+            task = create_task(
+                db,
+                session_id=session.id,
+                goal="work",
+                output_target=session.output_target,
+                harness_id="codex",
+            )
+            append_harness_event(db, task, HarnessEvent(type="progress", message="running tests"))
+            set_task_status(db, task.id, "running")
             slack = FakeSlackReplies()
 
             result = handle_control_message(
@@ -55,6 +66,8 @@ class ControlTest(unittest.TestCase):
 
             self.assertTrue(result.handled)
             self.assertIn("queued_inputs: 1", result.text)
+            self.assertIn(f"current_task: {task.id} running via codex", result.text)
+            self.assertIn("last_event: harness.progress", result.text)
             self.assertEqual("D1", slack.messages[0][0])
 
     def test_cancel_marks_session_and_inbox_canceled(self) -> None:

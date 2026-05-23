@@ -7,6 +7,7 @@ import unittest
 
 from innie.control import cancel_session, summarize_session
 from innie.db import connect, initialize_schema
+from innie.harness import HarnessEvent, ScriptedHarnessAdapter
 from innie.pipeline import accept_slack_event
 from innie.runtime import SessionManager
 
@@ -14,9 +15,25 @@ from innie.runtime import SessionManager
 class FakeSlack:
     def __init__(self) -> None:
         self.reactions: list[tuple[str, str, str]] = []
+        self.messages: list[tuple[str, str, str]] = []
+        self.updates: list[tuple[str, str, str]] = []
+        self.deletes: list[tuple[str, str]] = []
+        self._next_ts = 1
 
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self.reactions.append((channel, timestamp, name))
+
+    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+        self.messages.append((channel, thread_ts, text))
+        ts = f"900.{self._next_ts}"
+        self._next_ts += 1
+        return ts
+
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+        self.updates.append((channel, ts, text))
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
+        self.deletes.append((channel, ts))
 
 
 def event(event_id: str, ts: str, text: str, thread_ts: str | None = None) -> dict:
@@ -71,7 +88,14 @@ class Milestone1AcceptanceTest(unittest.TestCase):
             db.commit()
             db.close()
 
-            manager = SessionManager(db_path)
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="started"),
+                    HarnessEvent(type="output", message="placeholder agent work completed"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(db_path, adapters={"codex": adapter}, slack=slack, workspace=Path(tmp))
             try:
                 self.assertEqual([first.session.id], manager.hydrate())
                 asyncio.run(manager.run_until_idle())
@@ -80,7 +104,7 @@ class Milestone1AcceptanceTest(unittest.TestCase):
                     """
                     SELECT COUNT(*) AS count
                     FROM task_events
-                    WHERE session_id = ? AND event_type = 'harness.placeholder.output'
+                    WHERE session_id = ? AND event_type = 'harness.output'
                     """,
                     (first.session.id,),
                 ).fetchone()["count"]
