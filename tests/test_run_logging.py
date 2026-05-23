@@ -15,8 +15,9 @@ class RunLoggerTest(unittest.TestCase):
 
             logger.emit("hello log")
 
-            self.assertEqual(["hello log"], printed)
-            self.assertIn("hello log", logger.path.read_text(encoding="utf-8"))
+            self.assertEqual(1, len(printed))
+            self.assertRegex(printed[0], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z hello log$")
+            self.assertEqual(printed[0] + "\n", logger.path.read_text(encoding="utf-8"))
 
     def test_emit_rotates_log_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -60,20 +60,32 @@ Your dev environment
 
 ## Quickstart
 
-Clone the repo:
+The path is:
+
+1. Download the repo.
+2. Check and install dependencies with the provided script.
+3. Set up the Slack bot with the guided setup wizard.
+4. Start the fun.
+
+### 1. Download The Repo
 
 ```bash
 git clone https://github.com/darinyu/innie.git
 cd innie
 ```
 
-Install the `innie` command from this checkout:
+### 2. Check And Install Dependencies
+
+Install the `innie` command from this checkout. The provided script checks local
+dependencies and installs the command:
 
 ```bash
 python3 scripts/install.py
 ```
 
-Create local state and start setup:
+### 3. Set Up The Slack Bot
+
+Create local state and start the guided Slack setup wizard:
 
 ```bash
 innie init
@@ -93,6 +105,15 @@ innie slack setup
 
 For the guided Slack checklist, see
 [`docs/slack-setup.md`](docs/slack-setup.md).
+
+### 4. Start The Fun
+
+Run a first smoke test, then keep Innie running when you are ready:
+
+```bash
+innie run --once --harness codex
+innie run
+```
 
 ## Run
 
