@@ -2,7 +2,7 @@
 
 ![Innie wordmark](assets/logo/innie-wordmark.svg)
 
-**Every worker deserves an innie: an AI work-self you can trigger from Slack.**
+**Every worker deserves an innie: an AI work-self you can trigger from Slack anywhere, any time.**
 
 ![Innie Slack-to-agent workflow](assets/demo/innie-flow.gif)
 

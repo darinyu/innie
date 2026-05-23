@@ -93,7 +93,7 @@ def dev_environment(draw: ImageDraw.ImageDraw, on: bool, resources_on: bool) -> 
     text(draw, (330, 185), "local or cloud", MUTED, FONT_SM)
 
     box(draw, (330, 212, 562, 292), fill="#101C2D" if on else "#111923", outline="#25445F" if on else "#243247", radius=16)
-    text(draw, (350, 236), "Innie + harness", WHITE, FONT_H)
+    text(draw, (350, 236), "Innie", WHITE, FONT_H)
     text(draw, (350, 261), "durable session, queue, progress", MUTED, FONT_SM)
 
     items = [("repo", "code + tests"), ("skills", "runbooks"), ("MCP", "tools + data"), ("logs", "observability")]
@@ -109,7 +109,7 @@ def dev_environment(draw: ImageDraw.ImageDraw, on: bool, resources_on: bool) -> 
 
 def code_panel(draw: ImageDraw.ImageDraw, on: bool, progress: float) -> None:
     box(draw, (330, 318, 562, 408), fill="#0E1522", outline=BLUE if on else LINE, radius=16, width=3 if on else 2)
-    text(draw, (350, 342), "agent work", WHITE, FONT_H)
+    text(draw, (350, 342), "codex/claude", WHITE, FONT_H)
     status = "triage -> code -> checks"
     text(draw, (350, 370), status, GREEN if on else MUTED, FONT_SM)
     if on:

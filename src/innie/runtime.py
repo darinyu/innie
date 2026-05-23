@@ -20,6 +20,7 @@ from .inbox import (
 )
 from .progress import SlackProgressRenderer
 from .sessions import get_session
+from .sessions import set_harness_resume_id
 from .tasks import (
     TaskRecord,
     append_harness_event,
@@ -218,6 +219,7 @@ class SessionActor:
 
         terminal_status = "completed"
         try:
+            session = get_session(self._db, self.session_id)
             await adapter.start_task(
                 TaskRequest(
                     task_id=task.id,
@@ -226,12 +228,17 @@ class SessionActor:
                     workspace=str(self._workspace),
                     output_target=task.output_target,
                     execution_mode=task.execution_mode,
-                    recovery_context={"inbox_id": row.id},
+                    recovery_context={
+                        "inbox_id": row.id,
+                        "harness_resume_id": session.harness_resume_id,
+                    },
                 )
             )
             async for event in adapter.stream_events(task.id):
                 if event.type == "started":
                     continue
+                if event.type == "resume":
+                    self._record_harness_resume_id(event)
                 append_harness_event(self._db, task, event)
                 self._post_terminal_event(task.id, event)
                 self._post_progress(task.id, event, row)
@@ -248,6 +255,12 @@ class SessionActor:
             self._post_progress(task.id, failed_event, row)
             self._db.commit()
         return terminal_status
+
+    def _record_harness_resume_id(self, event: HarnessEvent) -> None:
+        resume_id = event.payload.get("resume_id") or event.payload.get("thread_id")
+        if not resume_id:
+            return
+        set_harness_resume_id(self._db, self.session_id, str(resume_id))
 
     def _post_progress(self, task_id: str, event: HarnessEvent, row) -> None:
         if self._slack is None:
@@ -431,6 +444,10 @@ class SessionActor:
     def _post_terminal_event(self, task_id: str, event: HarnessEvent) -> None:
         if event.type == "started":
             self._post_terminal_line(f"session {self.session_id} task {task_id} started")
+        elif event.type == "resume":
+            resume_id = event.payload.get("resume_id") or event.payload.get("thread_id")
+            if resume_id:
+                self._post_terminal_line(f"session {self.session_id} task {task_id} harness_resume_id={resume_id}")
         elif event.type == "completed":
             self._post_terminal_line(f"session {self.session_id} task {task_id} completed")
         elif event.type in {"progress", "tool_use", "tool_result", "output", "failed", "canceled"}:

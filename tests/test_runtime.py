@@ -149,6 +149,35 @@ class SequentialSessionAdapter:
         return []
 
 
+class ResumeRecordingAdapter:
+    harness_id = "resume_recording"
+    capabilities = HarnessCapabilities(supports_streaming=True, supports_resume=True)
+
+    def __init__(self) -> None:
+        self.recovery_contexts: list[dict] = []
+        self.task_order: list[str] = []
+
+    async def start_task(self, request):
+        self.recovery_contexts.append(dict(request.recovery_context))
+        self.task_order.append(request.task_id)
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        if task_id == self.task_order[0]:
+            yield HarnessEvent(type="resume", payload={"resume_id": "019e-thread"})
+        yield HarnessEvent(type="output", message=f"done {task_id}")
+        yield HarnessEvent(type="completed")
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+
 def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_ts: str | None = None) -> SlackTrigger:
     return SlackTrigger(
         event_id=event_id,
@@ -336,6 +365,61 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn("run_id", claim_payload)
             self.assertEqual("worker-1", claim_payload["worker_id"])
             self.assertEqual(session.id, claim_payload["session_id"])
+
+    def test_manager_stores_harness_resume_id_from_adapter_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1", "D1", "100.1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="resume", payload={"resume_id": "019e-thread"}),
+                    HarnessEvent(type="output", message="done"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+                session_row = manager.db.execute(
+                    "SELECT harness_resume_id FROM sessions WHERE id = ?",
+                    (session.id,),
+                ).fetchone()
+            finally:
+                manager.close()
+
+            self.assertEqual("019e-thread", session_row["harness_resume_id"])
+
+    def test_manager_passes_stored_harness_resume_id_to_followup_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            root = make_trigger("Ev1", "D1", "100.1")
+            followup = make_trigger("Ev2", "D1", "100.2", thread_ts="100.1")
+            for item in (root, followup):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="resume_recording")
+                enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = ResumeRecordingAdapter()
+            manager = SessionManager(path, adapters={"resume_recording": adapter}, workspace=Path(tmp), max_workers=2)
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertIsNone(adapter.recovery_contexts[0]["harness_resume_id"])
+            self.assertEqual("019e-thread", adapter.recovery_contexts[1]["harness_resume_id"])
 
     def test_manager_processes_sessions_concurrently_until_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

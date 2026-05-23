@@ -23,6 +23,7 @@ def initialize_schema(db: sqlite3.Connection) -> None:
             output_target TEXT,
             status TEXT NOT NULL DEFAULT 'new',
             harness_id TEXT,
+            harness_resume_id TEXT,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             UNIQUE(slack_channel_id, slack_root_ts)
@@ -112,6 +113,7 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         """
     )
     _ensure_column(db, "slack_triggers", "session_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")
+    _ensure_column(db, "sessions", "harness_resume_id", "TEXT")
     _ensure_column(db, "sessions", "locked_by", "TEXT")
     _ensure_column(db, "sessions", "locked_at", "TEXT")
     _ensure_column(db, "sessions", "lock_expires_at", "TEXT")

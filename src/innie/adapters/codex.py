@@ -16,7 +16,7 @@ class CodexCliAdapter:
     harness_id = "codex"
     capabilities = HarnessCapabilities(
         supports_streaming=True,
-        supports_resume=False,
+        supports_resume=True,
         supports_structured_artifacts=False,
         supports_native_approval=False,
         supports_autonomous_mode=True,
@@ -32,13 +32,27 @@ class CodexCliAdapter:
         self._stderr_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start_task(self, request: TaskRequest) -> TaskHandle:
+        resume_id = request.recovery_context.get("harness_resume_id")
+        if resume_id:
+            args = (
+                "codex",
+                "exec",
+                "resume",
+                "--json",
+                str(resume_id),
+                "-",
+            )
+        else:
+            args = (
+                "codex",
+                "exec",
+                "--json",
+                "--cd",
+                request.workspace,
+                "-",
+            )
         process = await self._spawn(
-            "codex",
-            "exec",
-            "--json",
-            "--cd",
-            request.workspace,
-            "-",
+            *args,
             cwd=request.workspace,
         )
         await _write_prompt(process, request.goal)
@@ -144,6 +158,13 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
     event_type = str(payload.get("type", ""))
     if event_type in {"session.started", "run.started"}:
         return HarnessEvent(type="started", message="Codex started.", payload=payload)
+    if event_type == "thread.started":
+        thread_id = payload.get("thread_id")
+        if thread_id:
+            event_payload = dict(payload)
+            event_payload["resume_id"] = str(thread_id)
+            return HarnessEvent(type="resume", payload=event_payload)
+        return None
     if event_type in {"agent_message_delta", "exec_command_begin", "exec_command_output_delta"}:
         message = payload.get("delta") or payload.get("message") or payload.get("command")
         return HarnessEvent(type="progress", message=str(message) if message else None, payload=payload)
