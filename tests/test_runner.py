@@ -11,7 +11,7 @@ from unittest import mock
 from innie.config import write_secrets
 from innie.harness import HarnessCapabilities, HarnessEvent, ScriptedHarnessAdapter, TaskHandle
 from innie.progress import SLACK_FINAL_TEXT_LIMIT, SLACK_TEXT_LIMIT
-from innie.runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_payload, run_once_socket
+from innie.runner import ConsoleSlackClient, adapter_map, format_run_acceptance, run_forever_socket, run_once_payload, run_once_socket
 
 
 def payload(text: str = "hello from slack") -> dict:
@@ -29,6 +29,13 @@ def payload(text: str = "hello from slack") -> dict:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_adapter_map_includes_claude_as_opt_in_peer_to_codex(self) -> None:
+        adapters = adapter_map()
+
+        self.assertIn("codex", adapters)
+        self.assertIn("claude", adapters)
+        self.assertTrue(adapters["claude"].capabilities.supports_resume)
+
     def test_run_once_payload_routes_slack_shape_through_echo_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
@@ -145,7 +152,7 @@ class RunnerTest(unittest.TestCase):
             blocks = slack.updates[-1][3]
             self.assertIsNotNone(blocks)
             self.assertEqual("section", blocks[1]["type"])
-            self.assertEqual("checking context", blocks[1]["text"]["text"])
+            self.assertEqual("No progress details recorded.", blocks[1]["text"]["text"])
             self.assertEqual("actions", blocks[2]["type"])
             self.assertEqual("innie_hide_progress_details", blocks[2]["elements"][0]["action_id"])
             self.assertNotIn("web search", blocks[1]["text"]["text"])

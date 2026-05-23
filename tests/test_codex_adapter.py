@@ -63,6 +63,68 @@ class FakeStdout:
 
 
 class CodexCliAdapterTest(unittest.TestCase):
+    def test_start_task_uses_codex_resume_when_recovery_context_has_resume_id(self) -> None:
+        process = FakeProcess([])
+        calls: list[tuple[tuple[str, ...], str]] = []
+
+        async def spawn(*args: str, cwd: str):
+            calls.append((args, cwd))
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+
+        async def run() -> None:
+            await adapter.start_task(
+                TaskRequest(
+                    task_id="task_1",
+                    session_id="sess_1",
+                    goal="follow up",
+                    workspace="/tmp/work",
+                    output_target="slack:D1:100.1",
+                    execution_mode="autonomous",
+                    recovery_context={"harness_resume_id": "019e-thread"},
+                )
+            )
+
+        asyncio.run(run())
+
+        self.assertEqual(
+            ("codex", "exec", "resume", "--json", "019e-thread", "-"),
+            calls[0][0],
+        )
+        self.assertEqual("/tmp/work", calls[0][1])
+        self.assertEqual(b"follow up", process.stdin.data)
+
+    def test_maps_thread_started_to_resume_event(self) -> None:
+        process = FakeProcess(
+            [
+                {"type": "thread.started", "thread_id": "019e-thread"},
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run():
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("resume", events[0].type)
+        self.assertEqual("019e-thread", events[0].payload["resume_id"])
+
     def test_maps_json_events_to_normalized_harness_events(self) -> None:
         process = FakeProcess(
             [

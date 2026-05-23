@@ -48,14 +48,14 @@ class FailingFinalUpdateSlack(FakeSlackReplies):
 
 class FailingProgressPostSlack(FakeSlackReplies):
     def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
-        if text in {"working", "first", "second"}:
+        if text in {"Innie is working", "working", "first", "second"}:
             raise RuntimeError("chat.postMessage failed: rate_limited")
         return super().post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
 
 
 class FailingProgressUpdateSlack(FakeSlackReplies):
     def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
-        if text in {"working", "first", "second"}:
+        if text in {"Innie is working", "working", "first", "second"}:
             raise RuntimeError("chat.update failed: rate_limited")
         super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
 
@@ -142,6 +142,35 @@ class SequentialSessionAdapter:
         )
         await asyncio.sleep(0)
         self.active_by_session[session_id] -= 1
+        yield HarnessEvent(type="output", message=f"done {task_id}")
+        yield HarnessEvent(type="completed")
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+
+class ResumeRecordingAdapter:
+    harness_id = "resume_recording"
+    capabilities = HarnessCapabilities(supports_streaming=True, supports_resume=True)
+
+    def __init__(self) -> None:
+        self.recovery_contexts: list[dict] = []
+        self.task_order: list[str] = []
+
+    async def start_task(self, request):
+        self.recovery_contexts.append(dict(request.recovery_context))
+        self.task_order.append(request.task_id)
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        if task_id == self.task_order[0]:
+            yield HarnessEvent(type="resume", payload={"resume_id": "019e-thread"})
         yield HarnessEvent(type="output", message=f"done {task_id}")
         yield HarnessEvent(type="completed")
 
@@ -337,6 +366,61 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual("worker-1", claim_payload["worker_id"])
             self.assertEqual(session.id, claim_payload["session_id"])
 
+    def test_manager_stores_harness_resume_id_from_adapter_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1", "D1", "100.1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="resume", payload={"resume_id": "019e-thread"}),
+                    HarnessEvent(type="output", message="done"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+                session_row = manager.db.execute(
+                    "SELECT harness_resume_id FROM sessions WHERE id = ?",
+                    (session.id,),
+                ).fetchone()
+            finally:
+                manager.close()
+
+            self.assertEqual("019e-thread", session_row["harness_resume_id"])
+
+    def test_manager_passes_stored_harness_resume_id_to_followup_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            root = make_trigger("Ev1", "D1", "100.1")
+            followup = make_trigger("Ev2", "D1", "100.2", thread_ts="100.1")
+            for item in (root, followup):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="resume_recording")
+                enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = ResumeRecordingAdapter()
+            manager = SessionManager(path, adapters={"resume_recording": adapter}, workspace=Path(tmp), max_workers=2)
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertIsNone(adapter.recovery_contexts[0]["harness_resume_id"])
+            self.assertEqual("019e-thread", adapter.recovery_contexts[1]["harness_resume_id"])
+
     def test_manager_processes_sessions_concurrently_until_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
@@ -371,7 +455,7 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(["idle", "idle"], statuses)
             self.assertEqual(2, events.count("harness.output"))
-            self.assertIn(("D1", "100.1", "working"), slack.messages)
+            self.assertIn(("D1", "100.1", "Innie is working"), slack.messages)
             self.assertIn(("D2", "900.2", "done"), slack.updates)
 
     def test_manager_updates_one_slack_progress_message_and_replaces_it_with_final_output(self) -> None:
@@ -424,7 +508,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual("plan", slack.update_blocks[0][0]["type"])
             self.assertEqual([], slack.deletes)
 
-    def test_manager_keeps_latest_progress_summary_above_tool_widget(self) -> None:
+    def test_manager_hides_thinking_progress_summary_above_tool_widget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -451,14 +535,9 @@ class RuntimeTest(unittest.TestCase):
             finally:
                 manager.close()
 
-            self.assertEqual("section", slack.update_blocks[0][0]["type"])
-            self.assertEqual("innie-progress-summary", slack.update_blocks[0][0]["block_id"])
-            self.assertEqual(
-                "I will check recent primary sources first.",
-                slack.update_blocks[0][0]["text"]["text"],
-            )
-            self.assertEqual("plan", slack.update_blocks[0][1]["type"])
-            self.assertEqual("Innie is searching the web", slack.update_blocks[0][1]["title"])
+            self.assertEqual("plan", slack.update_blocks[0][0]["type"])
+            self.assertEqual("Innie is searching the web", slack.update_blocks[0][0]["title"])
+            self.assertNotIn("I will check recent primary sources first.", str(slack.update_blocks[0]))
 
     def test_manager_deletes_progress_message_and_posts_fallback_when_final_update_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -501,7 +580,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(("D1", "100.1"), fallback_messages[0][:2])
             self.assertTrue(fallback_messages[0][2].startswith("final answer"))
             self.assertTrue(all(len(message[2]) <= SLACK_FINAL_TEXT_LIMIT for message in fallback_messages))
-            self.assertEqual("context", slack.message_blocks[1][0]["type"])
+            self.assertEqual("section", slack.message_blocks[1][0]["type"])
             self.assertNotIn("Progress details", str(slack.message_blocks[2]))
             self.assertIn(
                 f"session {session.id} task ",
@@ -617,7 +696,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn("adapter crashed", slack.updates[-1][2])
             self.assertIn("failed: adapter crashed", "\n".join(terminal))
 
-    def test_manager_splits_long_final_output_and_only_first_message_has_progress_details(self) -> None:
+    def test_manager_splits_long_final_output_without_progress_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -647,11 +726,12 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(("D1", "900.1", first_line), slack.updates[-1])
             self.assertEqual(("D1", "100.1", second_line), slack.messages[-1])
-            self.assertEqual("context", slack.update_blocks[-1][0]["type"])
+            self.assertEqual("section", slack.update_blocks[-1][0]["type"])
             self.assertEqual("section", slack.message_blocks[-1][0]["type"])
+            self.assertNotIn("Progress details", str(slack.update_blocks[-1]))
             self.assertNotIn("Progress details", str(slack.message_blocks[-1]))
 
-    def test_manager_posts_final_output_with_collapsed_progress_details(self) -> None:
+    def test_manager_posts_final_output_without_progress_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -681,10 +761,10 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(("D1", "900.1", "final answer"), slack.updates[-1])
             final_blocks = slack.update_blocks[-1]
             self.assertIsNotNone(final_blocks)
-            self.assertEqual("context", final_blocks[0]["type"])
-            self.assertEqual("actions", final_blocks[1]["type"])
-            self.assertEqual("show more", final_blocks[1]["elements"][0]["text"]["text"])
-            self.assertEqual("final answer", final_blocks[3]["text"]["text"])
+            self.assertEqual("section", final_blocks[0]["type"])
+            self.assertEqual("final answer", final_blocks[0]["text"]["text"])
+            self.assertNotIn("Progress details", str(final_blocks))
+            self.assertNotIn("show more", str(final_blocks))
 
     def test_manager_posts_progress_widget_to_root_thread_for_channel_and_threaded_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

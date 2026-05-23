@@ -49,8 +49,8 @@ class SlackProgressRenderer:
         if event.type == "started":
             return None
         if event.type == "progress" and event.message:
-            text = self._formatter.format(event.message)
-            return SlackRenderedMessage(text=text, blocks=_progress_blocks("Innie is working", text, include_summary=True))
+            text = "Innie is working"
+            return SlackRenderedMessage(text=text, blocks=_progress_blocks("Innie is working", "Working"))
         if event.type == "tool_use" and event.message:
             text = self._format_tool_use(event)
             title = f"Innie is {_tool_verb(str(event.payload.get('tool_name') or event.payload.get('tool') or 'tool'))}"
@@ -110,12 +110,8 @@ class SlackProgressRenderer:
             return [] if rendered is None else [rendered]
         parts = _split_text_at_newlines(rendered.text, SLACK_FINAL_TEXT_LIMIT)
         messages = []
-        for index, part in enumerate(parts):
-            if index == 0 and progress_details:
-                blocks = _final_blocks(task_id=task_id, final_text=part, progress_details=progress_details, expanded=False)
-            else:
-                blocks = _final_output_blocks(part)
-            messages.append(SlackRenderedMessage(text=part, blocks=blocks))
+        for part in parts:
+            messages.append(SlackRenderedMessage(text=part, blocks=_final_output_blocks(part)))
         return messages
 
     def render_expanded_final_widget(
@@ -154,8 +150,6 @@ class SlackProgressRenderer:
         )
 
     def detail_line(self, event: HarnessEvent) -> str | None:
-        if event.type == "progress" and event.message:
-            return self._formatter.format(event.message)
         return None
 
     def _format_tool_use(self, event: HarnessEvent) -> str:

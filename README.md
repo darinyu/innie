@@ -2,7 +2,7 @@
 
 ![Innie wordmark](assets/logo/innie-wordmark.svg)
 
-**Every worker deserves an innie: an AI work-self you can trigger from Slack, any where, any time.**
+**Every worker deserves an innie: an AI work-self you can trigger from Slack anywhere, any time.**
 
 > Innie is an early prototype. The repo contains the first local setup,
 > Slack setup, durable state, hooks, session inspection, Codex and echo adapter
@@ -125,6 +125,12 @@ After `innie slack setup`, test one real Slack-routed Codex event and exit:
 innie run --once --harness codex
 ```
 
+Claude Code is available as an opt-in peer harness:
+
+```bash
+innie run --once --harness claude
+```
+
 `--once` is a smoke-test mode: Innie connects, waits for one routed Slack event,
 processes it, prints the session id and log command, then exits.
 
@@ -137,7 +143,7 @@ innie run
 Stop it with Ctrl-C.
 
 Use `--harness echo` when you want to debug Slack routing without starting
-Codex.
+Codex or Claude.
 
 ## Development
 
@@ -167,8 +173,8 @@ architecture plan.
 - Rich for colored, wrapped terminal setup screens. `scripts/install.py` asks
   before installing it, and Innie falls back to plain text if you skip it.
 - A Slack app for DM and channel mention triggers.
-- Codex CLI. V0 supports Codex; Claude Code, OpenCode, Goose, and custom
-  runtimes are future adapters.
+- Codex CLI or Claude Code CLI. Codex remains the default; Claude is opt-in via
+  `--harness claude`. OpenCode, Goose, and custom runtimes are future adapters.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
   environment.
 

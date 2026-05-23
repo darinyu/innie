@@ -46,15 +46,14 @@ class BootstrapTest(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertFalse((workspace / ".innie").exists())
 
-    def test_v0_missing_harness_message_names_codex(self) -> None:
+    def test_missing_harness_message_names_supported_opt_in_harnesses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             with mock.patch("innie.bootstrap.shutil.which", return_value=None):
                 result = init_workspace(workspace, assume_yes=True)
 
         messages = "\n".join(result.messages).lower()
-        self.assertIn("none found: codex", messages)
-        self.assertNotIn("claude", messages)
+        self.assertIn("none found: codex, claude", messages)
         self.assertNotIn("opencode", messages)
         self.assertNotIn("goose", messages)
 
