@@ -9,6 +9,7 @@ except ImportError:  # pragma: no cover - exercised when rich is not installed
     Console = None
 
 from .bootstrap import init_workspace
+from .cleanup import apply_cleanup, format_cleanup_preview, preview_cleanup
 from .config import innie_dir
 from .control import cancel_session, summarize_session
 from .db import connect, initialize_schema
@@ -60,6 +61,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     cancel_parser = subparsers.add_parser("cancel", help="Cancel a durable session")
     cancel_parser.add_argument("session_id")
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup",
+        help="Preview or delete old completed local task state; dry run is the default",
+        description=(
+            "Preview or delete completed local task state older than 30 days. "
+            "Dry run is the default; pass --apply to delete."
+        ),
+    )
+    cleanup_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete eligible local state. Without this flag cleanup only previews old completed tasks.",
+    )
 
     run_parser = subparsers.add_parser("run", help="Run Innie against Slack or one Slack-shaped event")
     run_parser.add_argument("--once", action="store_true", help="Process one event and exit")
@@ -114,6 +129,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "cancel":
         with _open_workspace_db(state_dir) as db:
             print(cancel_session(db, args.session_id))
+        return 0
+
+    if args.command == "cleanup":
+        with _open_workspace_db(state_dir) as db:
+            if args.apply:
+                print(format_cleanup_preview(apply_cleanup(db, state_dir), applied=True))
+            else:
+                print(format_cleanup_preview(preview_cleanup(db, state_dir)))
         return 0
 
     if args.command == "run":

@@ -1170,110 +1170,101 @@ before adding more adapters.
 
 ### Milestone 4: Cleanup And Retention
 
-Milestone 4 should make local state understandable, bounded, and safe to clean
-before adding broader observability surfaces.
+Milestone 4 should be a small, safe cleanup command. Keep v1 conservative:
+clean only old completed local state, dry run by default, and never touch active
+or recoverable work.
 
-Task 1: Define Cleanup Policy And Safety Rules.
+Task 1: Define The V1 Cleanup Rule.
 
-Goal: Decide exactly what Innie is allowed to delete, keep, or summarize.
+Goal: Make the cleanup behavior simple enough to trust.
 
-- Define default retention windows for completed tasks, failed/interrupted
-  tasks, task events, artifacts, run logs, and Slack progress metadata.
-- Never delete queued, processing, running, locked, or pending approval state.
-- Treat cleanup as local-state maintenance only; it must not delete Slack
-  messages or harness-owned workspace files unless a future explicit policy
-  allows it.
-- Acceptance: retention policy is documented in the plan and exposed in command
-  help or config docs.
+- Files:
+  - Modify: `docs/initial-plan.md`
+  - Modify: `src/innie/cli.py`
+- V1 only considers completed tasks older than 30 days.
+- V1 deletes only local SQLite rows and artifact files under `.innie/`.
+- V1 does not delete Slack messages, harness workspace files, failed tasks,
+  interrupted tasks, queued work, running work, locked sessions, or run logs.
+- Acceptance: `innie cleanup --help` says dry run is default, `--apply` is
+  required to delete, and v1 only cleans completed tasks older than 30 days.
 
-Task 2: Add Cleanup Metadata And Indexes.
+Task 2: Add A Read-Only Cleanup Preview.
 
-Goal: Make cleanup queries fast and auditable before adding the cleanup command.
+Goal: Show what cleanup would remove without changing anything.
 
-- Add or verify timestamp fields needed for retention decisions:
-  `created_at`, `updated_at`, `completed_at`, `processed_at`, and artifact
-  creation time.
-- Add indexes for cleanup scans by status and timestamp.
-- Add a cleanup run event record so each dry run or apply run is visible later.
-- Acceptance: schema migration is backward compatible and existing databases can
-  be opened without manual repair.
+- Files:
+  - Create: `src/innie/cleanup.py`
+  - Test: `tests/test_cleanup.py`
+- Find completed tasks with `completed_at` older than 30 days.
+- Include related `task_events` and artifacts for those tasks.
+- Include artifact files only if their paths are inside `.innie/`.
+- Return a small preview: task count, event count, artifact count, byte estimate,
+  and task ids.
+- Acceptance: preview finds old completed tasks and ignores recent, failed,
+  interrupted, queued, running, and locked work.
 
-Task 3: Implement Cleanup Candidate Discovery.
+Task 3: Add `innie cleanup` Dry Run.
 
-Goal: Build a read-only cleanup planner that returns exactly what would be
-removed or compacted.
+Goal: Let users run cleanup safely as a no-op first.
 
-- Compute candidates for completed tasks older than the retention window.
-- Include related task events, artifacts, hook events, and run log files when
-  they are safe to remove.
-- Exclude any session with queued, processing, running, locked, canceled-but-not
-  finalized, or interrupted work that still needs user action.
-- Return counts, byte estimates where available, oldest/newest timestamps, and
-  reasons each item is eligible.
-- Acceptance: unit tests cover eligible completed work, locked sessions,
-  interrupted work, and missing artifact files.
+- Files:
+  - Modify: `src/innie/cli.py`
+  - Modify: `src/innie/cleanup.py`
+  - Test: `tests/test_cli_cleanup.py`
+- Add `innie cleanup` command.
+- Dry run is the default.
+- Print the preview from Task 2.
+- Do not write to SQLite and do not delete files.
+- Acceptance: `innie cleanup` changes nothing and prints what `--apply` would
+  remove.
 
-Task 4: Add `innie cleanup --dry-run`.
+Task 4: Add `innie cleanup --apply`.
 
-Goal: Let users inspect cleanup impact without changing local state.
+Goal: Delete only the exact local state shown by the preview.
 
-- Print a concise summary of sessions, tasks, events, artifacts, logs, and bytes
-  that would be removed.
-- Include enough ids for debugging: session ids, task ids, artifact paths, and
-  retention reason.
-- Make dry run the default behavior unless `--apply` is explicitly passed.
-- Acceptance: dry run changes no rows or files and records a non-destructive
-  cleanup preview event.
-
-Task 5: Add `innie cleanup --apply`.
-
-Goal: Safely remove eligible local state after the dry-run planner is trusted.
-
+- Files:
+  - Modify: `src/innie/cleanup.py`
+  - Modify: `src/innie/cli.py`
+  - Test: `tests/test_cleanup.py`
+  - Test: `tests/test_cli_cleanup.py`
 - Require explicit `--apply`.
-- Recompute candidates immediately before deletion instead of trusting stale dry
-  run output.
-- Delete files before rows only when file paths are inside Innie-owned state
-  directories.
-- Delete rows in dependency order so foreign keys remain valid.
-- Record what was deleted and what was skipped.
-- Acceptance: apply removes only eligible local state and leaves active sessions
-  untouched.
+- Recompute the preview immediately before deleting.
+- Delete eligible `.innie/` artifact files.
+- Delete related artifact rows, task events, and task rows.
+- Leave the session row in place for now, with no task history for the cleaned
+  task. Session deletion can be a later improvement.
+- Treat missing artifact files as already clean.
+- Acceptance: apply removes old completed task data and leaves active,
+  recoverable, recent, failed, and interrupted work untouched.
 
-Task 6: Add Cleanup Fault Tolerance.
+Task 5: Show Cleanup Results In Logs.
 
-Goal: Ensure cleanup never corrupts the database or leaves unclear partial
-state.
+Goal: Make cleanup visible without adding a full observability system.
 
-- Wrap database changes in a transaction.
-- Treat missing files as already-clean and record them as skipped/missing.
-- If file deletion fails, keep related database rows and report the failure.
-- If database deletion fails, leave files untouched when possible and record the
-  error.
-- Acceptance: tests cover missing files, file deletion failure, and database
-  rollback.
+- Files:
+  - Modify: `src/innie/cleanup.py`
+  - Modify: `src/innie/cli.py`
+  - Test: `tests/test_cli_inspection.py`
+- Record one `task_events` row per affected session when `--apply` deletes data:
+  `event_type='cleanup.applied'`.
+- Include the deleted task ids and counts in the payload.
+- `innie logs <session>` already prints task events, so no new UI surface is
+  needed.
+- Acceptance: after apply, `innie logs <session>` shows the cleanup event.
 
-Task 7: Add Cleanup Status To Existing Inspection Commands.
-
-Goal: Make cleanup behavior visible without requiring a separate debugging path.
-
-- Show cleanup eligibility or retention reason in `innie status` for a session.
-- Show cleanup preview/apply events in `innie logs`.
-- Include storage size and oldest retained task where cheap to compute.
-- Acceptance: `innie status` and `innie logs` explain why a session will or will
-  not be cleaned up.
-
-Task 8: Run Cleanup E2E.
+Task 6: Run Cleanup E2E.
 
 Goal: Verify cleanup is safe on realistic local state.
 
-- Create completed, failed, interrupted, queued, and running sessions in a test
-  workspace.
-- Run dry run and verify it reports only eligible completed state.
-- Run apply and verify active/recoverable work remains intact.
-- Run `innie logs` after cleanup and verify cleanup actions are still
-  explainable.
-- Acceptance: cleanup is reversible in behavior by rerunning with no candidates,
-  and it never deletes active or recoverable work.
+- Files:
+  - Test: `tests/test_milestone4_acceptance.py`
+- Create old completed, recent completed, failed, interrupted, queued, and
+  running tasks in a test workspace.
+- Run dry run and verify it reports only old completed task state.
+- Run apply and verify protected work remains intact.
+- Run `innie logs` after cleanup and verify the cleanup event is visible.
+- Acceptance: rerunning cleanup after apply reports no candidates, and active or
+  recoverable work is never deleted.
 
 ### Milestone 5: Observability
 
