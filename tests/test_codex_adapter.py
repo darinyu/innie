@@ -268,6 +268,89 @@ class CodexCliAdapterTest(unittest.TestCase):
         self.assertEqual("pricing model", events[0].message)
         self.assertEqual("web_search", events[0].payload["tool_name"])
 
+    def test_maps_codex_web_search_started_item_to_generic_tool_widget_event(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "item.started",
+                    "item": {
+                        "action": {"type": "other"},
+                        "id": "ws_1",
+                        "query": "",
+                        "type": "web_search",
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[HarnessEvent]:
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("tool_use", events[0].type)
+        self.assertEqual("web search", events[0].message)
+        self.assertEqual("web_search", events[0].payload["tool_name"])
+
+    def test_maps_codex_web_search_completed_query_to_tool_widget_event(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "action": {
+                            "queries": [
+                                "May 22 2026 stock market today Reuters Wall Street S&P Nasdaq Dow",
+                            ],
+                            "type": "search",
+                        },
+                        "id": "ws_1",
+                        "query": "May 22 2026 stock market today Reuters Wall Street S&P Nasdaq Dow ...",
+                        "type": "web_search",
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[HarnessEvent]:
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("tool_use", events[0].type)
+        self.assertEqual("May 22 2026 stock market today Reuters Wall Street S&P Nasdaq Dow ...", events[0].message)
+        self.assertEqual("web_search", events[0].payload["tool_name"])
+
     def test_maps_turn_completed_usage(self) -> None:
         process = FakeProcess(
             [

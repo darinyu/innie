@@ -16,12 +16,24 @@ class FakeSlack:
     def __init__(self) -> None:
         self.reactions: list[tuple[str, str, str]] = []
         self.messages: list[tuple[str, str, str]] = []
+        self.updates: list[tuple[str, str, str]] = []
+        self.deletes: list[tuple[str, str]] = []
+        self._next_ts = 1
 
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self.reactions.append((channel, timestamp, name))
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
+    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str:
         self.messages.append((channel, thread_ts, text))
+        ts = f"900.{self._next_ts}"
+        self._next_ts += 1
+        return ts
+
+    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+        self.updates.append((channel, ts, text))
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
+        self.deletes.append((channel, ts))
 
 
 def event(event_id: str, ts: str, text: str, thread_ts: str | None = None) -> dict:

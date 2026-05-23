@@ -204,6 +204,31 @@ class RunnerTest(unittest.TestCase):
             self.assertTrue(accepted_lines[1].startswith("accepted existing session "))
             self.assertEqual(accepted_lines[0].replace("accepted new session ", ""), accepted_lines[1].replace("accepted existing session ", ""))
 
+    def test_run_forever_socket_verbose_reports_acceptance_once(self) -> None:
+        class FakeEventSource:
+            def __init__(self) -> None:
+                self._payloads = [payload("root")]
+
+            async def receive_once(self) -> dict:
+                if not self._payloads:
+                    raise KeyboardInterrupt
+                return self._payloads.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            printed: list[str] = []
+            run_forever_socket(
+                Path(tmp),
+                harness_id="echo",
+                bot_user_id="U_BOT",
+                slack=ConsoleSlackClient(output=printed.append),
+                event_source=FakeEventSource(),
+                output=printed.append,
+                verbose=True,
+            )
+
+            accepted_lines = [line for line in printed if line.startswith("accepted ")]
+            self.assertEqual(1, len(accepted_lines))
+
     def test_run_forever_socket_explains_ignored_events(self) -> None:
         class FakeEventSource:
             def __init__(self) -> None:

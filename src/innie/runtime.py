@@ -47,6 +47,7 @@ class SessionActor:
         self._progress = progress
         self._event_output = event_output
         self._cancel_requested = False
+        self._progress_messages: dict[str, tuple[str, str]] = {}
 
     def cancel(self) -> None:
         self._cancel_requested = True
@@ -128,13 +129,44 @@ class SessionActor:
         if self._slack is None:
             return
         text = self._progress.render(task_id, event)
+        if event.type in {"output", "failed", "canceled", "completed"}:
+            self._delete_progress_message(task_id)
         if text is None:
+            return
+        if event.type in {"progress", "tool_use", "tool_result", "usage"}:
+            self._upsert_progress_message(
+                task_id,
+                channel=row.slack_channel_id,
+                thread_ts=row.slack_thread_ts or row.slack_message_ts,
+                text=text,
+            )
             return
         self._slack.post_message(
             channel=row.slack_channel_id,
             thread_ts=row.slack_thread_ts or row.slack_message_ts,
             text=text,
         )
+
+    def _upsert_progress_message(self, task_id: str, *, channel: str, thread_ts: str, text: str) -> None:
+        if self._slack is None:
+            return
+        current = self._progress_messages.get(task_id)
+        if current is None:
+            ts = self._slack.post_message(channel=channel, thread_ts=thread_ts, text=text)
+            if ts:
+                self._progress_messages[task_id] = (channel, ts)
+            return
+        current_channel, ts = current
+        self._slack.update_message(channel=current_channel, ts=ts, text=text)
+
+    def _delete_progress_message(self, task_id: str) -> None:
+        if self._slack is None:
+            return
+        current = self._progress_messages.pop(task_id, None)
+        if current is None:
+            return
+        channel, ts = current
+        self._slack.delete_message(channel=channel, ts=ts)
 
     def _post_terminal_event(self, task_id: str, event: HarnessEvent) -> None:
         if self._event_output is None:

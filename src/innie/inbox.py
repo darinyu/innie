@@ -50,6 +50,27 @@ def enqueue_trigger(db: sqlite3.Connection, *, session: SessionRecord, trigger: 
     return _row_for_event(db, session.id, trigger.event_id)
 
 
+def find_row_for_trigger_message(db: sqlite3.Connection, *, trigger: SlackTrigger) -> InboxRow | None:
+    row = db.execute(
+        """
+        SELECT i.*
+        FROM session_inbox i
+        JOIN sessions s ON s.id = i.session_id
+        WHERE s.slack_channel_id = ?
+          AND s.slack_root_ts = ?
+          AND i.slack_channel_id = ?
+          AND i.slack_message_ts = ?
+        """,
+        (
+            trigger.channel_id,
+            trigger.thread_ts or trigger.message_ts,
+            trigger.channel_id,
+            trigger.message_ts,
+        ),
+    ).fetchone()
+    return _to_inbox_row(row) if row is not None else None
+
+
 def queued_inbox_rows(db: sqlite3.Connection, session_id: str) -> list[InboxRow]:
     rows = db.execute(
         """

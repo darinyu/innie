@@ -6,7 +6,13 @@ from typing import Protocol
 
 
 class SlackReplyClient(Protocol):
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
+    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str | None:
+        ...
+
+    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+        ...
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
         ...
 
 

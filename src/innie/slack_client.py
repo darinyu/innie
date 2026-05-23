@@ -16,8 +16,15 @@ class SlackWebClient:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self._post_json("reactions.add", {"channel": channel, "timestamp": timestamp, "name": name})
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
-        self._post_json("chat.postMessage", {"channel": channel, "thread_ts": thread_ts, "text": text})
+    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str | None:
+        result = self._post_json("chat.postMessage", {"channel": channel, "thread_ts": thread_ts, "text": text})
+        return result.get("ts")
+
+    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+        self._post_json("chat.update", {"channel": channel, "ts": ts, "text": text})
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
+        self._post_json("chat.delete", {"channel": channel, "ts": ts})
 
     def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")

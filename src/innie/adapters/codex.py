@@ -195,13 +195,15 @@ def _map_tool_item(item: Any) -> HarnessEvent | None:
 
 
 def _looks_like_tool(item_type: str, item: dict[str, Any]) -> bool:
-    if item_type.endswith("_call") or item_type in {"function_call", "tool_call", "web_search_call"}:
+    if item_type.endswith("_call") or item_type.endswith("_execution"):
+        return True
+    if item_type in {"function_call", "tool_call", "web_search", "web_search_call"}:
         return True
     return "tool" in item or "name" in item and item.get("arguments") is not None
 
 
 def _normalize_tool_name(item_type: str) -> str:
-    if item_type == "web_search_call":
+    if item_type in {"web_search", "web_search_call"}:
         return "web_search"
     if item_type.endswith("_call"):
         return item_type[: -len("_call")]
@@ -220,6 +222,16 @@ def _tool_message(item: dict[str, Any]) -> str | None:
         for key in ("query", "command", "path"):
             if arguments.get(key):
                 return str(arguments[key])
+    action = item.get("action")
+    if isinstance(action, dict):
+        queries = action.get("queries")
+        if isinstance(queries, list) and queries:
+            return str(queries[0])
+        for key in ("query", "command", "url", "path"):
+            if action.get(key):
+                return str(action[key])
+    if item.get("type") == "web_search":
+        return "web search"
     return _extract_text(item.get("output") or item.get("result"))
 
 

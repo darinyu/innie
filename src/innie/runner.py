@@ -36,8 +36,15 @@ class ConsoleSlackClient:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self._output(f"reaction {channel} {timestamp} {name}")
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
+    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str:
         self._output(f"message {channel} {thread_ts} {text}")
+        return thread_ts
+
+    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+        self._output(f"update {channel} {ts} {text}")
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
+        self._output(f"delete {channel} {ts}")
 
 
 def adapter_map(*, verbose: bool = False, output: OutputFn | None = None) -> dict[str, HarnessAdapter]:
@@ -179,6 +186,7 @@ async def _run_forever_socket_async(
                 adapters=adapters,
                 verbose=verbose,
                 output=output,
+                announce_acceptance=False,
             )
         except KeyboardInterrupt:
             output(f"stopped after {accepted_count} accepted event(s)")
@@ -202,6 +210,7 @@ async def _run_once_socket_async(
     adapters: dict[str, HarnessAdapter] | None,
     verbose: bool = False,
     output: OutputFn | None = None,
+    announce_acceptance: bool = True,
 ) -> RunOnceResult:
     workspace = workspace.resolve()
     config = read_workspace_config(workspace)
@@ -224,6 +233,7 @@ async def _run_once_socket_async(
         adapters=adapters,
         verbose=verbose,
         output=output,
+        announce_acceptance=announce_acceptance,
     )
 
 
@@ -268,6 +278,7 @@ async def process_payload(
     adapters: dict[str, HarnessAdapter] | None = None,
     verbose: bool = False,
     output: OutputFn | None = None,
+    announce_acceptance: bool = True,
 ) -> RunOnceResult:
     workspace = workspace.resolve()
     db_path = innie_dir(workspace) / "innie.db"
@@ -298,7 +309,7 @@ async def process_payload(
         session_status=session_status,
         harness_id=accepted.session.harness_id,
     )
-    if verbose and output is not None:
+    if verbose and announce_acceptance and output is not None:
         output(format_run_acceptance(result))
 
     manager = SessionManager(

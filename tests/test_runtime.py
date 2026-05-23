@@ -16,9 +16,21 @@ from innie.slack_events import SlackTrigger, persist_trigger
 class FakeSlackReplies:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str, str]] = []
+        self.updates: list[tuple[str, str, str]] = []
+        self.deletes: list[tuple[str, str]] = []
+        self._next_ts = 1
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
+    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str:
         self.messages.append((channel, thread_ts, text))
+        ts = f"900.{self._next_ts}"
+        self._next_ts += 1
+        return ts
+
+    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+        self.updates.append((channel, ts, text))
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
+        self.deletes.append((channel, ts))
 
 
 def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1") -> SlackTrigger:
@@ -71,6 +83,56 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(2, events.count("harness.output"))
             self.assertIn(("D1", "100.1", "Progress: working"), slack.messages)
             self.assertIn(("D2", "200.1", "done"), slack.messages)
+
+    def test_manager_updates_one_slack_progress_message_and_deletes_it_before_final_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}),
+                    HarnessEvent(
+                        type="tool_use",
+                        message="Cerebras OpenAI partnership AWS 2026 official Cerebras ...",
+                        payload={"tool_name": "web_search"},
+                    ),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual(
+                [
+                    ("D1", "100.1", "*Innie is searching the web*\n> web search"),
+                    ("D1", "100.1", "final answer"),
+                ],
+                slack.messages,
+            )
+            self.assertEqual(
+                [
+                    (
+                        "D1",
+                        "900.1",
+                        "*Innie is searching the web*\n> Cerebras OpenAI partnership AWS 2026 official Cerebras ...",
+                    ),
+                ],
+                slack.updates,
+            )
+            self.assertEqual([("D1", "900.1")], slack.deletes)
 
     def test_manager_logs_task_started_to_terminal_not_slack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
