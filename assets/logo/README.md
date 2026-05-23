@@ -10,7 +10,7 @@ The current logo direction is **Black Ice**, a flat percent-inspired mark:
 
 - `innie-mark.svg`: primary mark.
 - `innie-app-icon.svg`: square app icon for Slack, GitHub, and favicons.
-- `innie-wordmark.svg`: mark plus lowercase wordmark.
+- `innie-wordmark.svg`: mark plus wordmark.
 - `innie-mark-mono.svg`: monochrome fallback.
 
 ## Palette
@@ -18,4 +18,3 @@ The current logo direction is **Black Ice**, a flat percent-inspired mark:
 - Ink: `#05070A`
 - Ice: `#EEF6FF`
 - Innie blue: `#93C5FD`
-

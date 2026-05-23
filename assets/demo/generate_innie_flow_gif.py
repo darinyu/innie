@@ -69,6 +69,11 @@ def arrow(draw: ImageDraw.ImageDraw, start: tuple[int, int], end: tuple[int, int
     draw.polygon([(xy(end[0]), xy(end[1])), (xy(pts[0][0]), xy(pts[0][1])), (xy(pts[1][0]), xy(pts[1][1]))], fill=fill)
 
 
+def double_arrow(draw: ImageDraw.ImageDraw, start: tuple[int, int], end: tuple[int, int], fill: str = LINE, width: int = 4) -> None:
+    arrow(draw, start, end, fill, width)
+    arrow(draw, end, start, fill, width)
+
+
 def active(draw: ImageDraw.ImageDraw, center: tuple[int, int], t: float, color: str = CYAN) -> None:
     pulse = 8 + 5 * math.sin(t * math.pi)
     draw.ellipse((xy(center[0] - pulse), xy(center[1] - pulse), xy(center[0] + pulse), xy(center[1] + pulse)), outline=color, width=xy(3))
@@ -76,15 +81,16 @@ def active(draw: ImageDraw.ImageDraw, center: tuple[int, int], t: float, color: 
 
 
 def phone(draw: ImageDraw.ImageDraw, on: bool) -> None:
-    box(draw, (54, 118, 206, 398), fill="#0E1724", outline=BLUE if on else LINE, radius=28, width=3 if on else 2)
-    draw.rounded_rectangle((xy(100), xy(132), xy(160), xy(140)), radius=xy(4), fill="#1E2A3A")
-    text(draw, (130, 170), "Slack", WHITE, FONT_H, anchor="mm")
-    box(draw, (76, 202, 184, 263), fill="#162235", outline="#243247", radius=14)
-    text(draw, (91, 218), "innie", BLUE, FONT_SM)
-    text(draw, (91, 239), "triage issue #42", ICE, FONT_SM)
-    box(draw, (70, 282, 190, 348), fill="#1C2D22" if on else "#162235", outline="#2B4332" if on else "#243247", radius=14)
-    text(draw, (91, 301), "reply", GREEN if on else MUTED, FONT_SM)
-    text(draw, (91, 324), "fix ready", ICE if on else MUTED, FONT_SM)
+    text(draw, (130, 136), "Outie", WHITE if on else MUTED, FONT_H, anchor="mm")
+    box(draw, (54, 158, 206, 438), fill="#0E1724", outline=BLUE if on else LINE, radius=28, width=3 if on else 2)
+    draw.rounded_rectangle((xy(100), xy(172), xy(160), xy(180)), radius=xy(4), fill="#1E2A3A")
+    text(draw, (130, 210), "Slack", WHITE, FONT_H, anchor="mm")
+    box(draw, (76, 242, 184, 303), fill="#162235", outline="#243247", radius=14)
+    text(draw, (91, 258), "innie", BLUE, FONT_SM)
+    text(draw, (91, 279), "triage issue #42", ICE, FONT_SM)
+    box(draw, (70, 322, 190, 388), fill="#1C2D22" if on else "#162235", outline="#2B4332" if on else "#243247", radius=14)
+    text(draw, (91, 341), "reply", GREEN if on else MUTED, FONT_SM)
+    text(draw, (91, 364), "fix ready", ICE if on else MUTED, FONT_SM)
 
 
 def dev_environment(draw: ImageDraw.ImageDraw, on: bool, resources_on: bool) -> None:
@@ -93,23 +99,27 @@ def dev_environment(draw: ImageDraw.ImageDraw, on: bool, resources_on: bool) -> 
     text(draw, (330, 185), "local or cloud", MUTED, FONT_SM)
 
     box(draw, (330, 212, 562, 292), fill="#101C2D" if on else "#111923", outline="#25445F" if on else "#243247", radius=16)
-    text(draw, (350, 236), "Innie + harness", WHITE, FONT_H)
+    text(draw, (350, 236), "Innie", WHITE, FONT_H)
     text(draw, (350, 261), "durable session, queue, progress", MUTED, FONT_SM)
 
+    box(draw, (596, 202, 864, 408), fill="#0E1724" if resources_on else "#0D141F", outline="#25445F" if resources_on else "#243247", radius=16, width=3 if resources_on else 2)
+    text(draw, (616, 228), "Workspace access", WHITE if resources_on else MUTED, FONT_H)
+    text(draw, (616, 252), "available to coding agents", MUTED, FONT_SM)
+
     items = [("repo", "code + tests"), ("skills", "runbooks"), ("MCP", "tools + data"), ("logs", "observability")]
-    x0 = 600
-    y = 205
+    x0 = 616
+    y = 270
     for i, (head, body) in enumerate(items):
         row_on = resources_on
-        box(draw, (x0, y, 860, y + 43), fill="#132336" if row_on else "#111923", outline="#25445F" if row_on else "#243247", radius=10)
+        box(draw, (x0, y, 844, y + 28), fill="#132336" if row_on else "#111923", outline="#25445F" if row_on else "#243247", radius=8)
         text(draw, (x0 + 16, y + 16), head, CYAN if row_on else MUTED, FONT_SM)
         text(draw, (x0 + 86, y + 16), body, ICE if row_on else MUTED, FONT_SM)
-        y += 54
+        y += 32
 
 
 def code_panel(draw: ImageDraw.ImageDraw, on: bool, progress: float) -> None:
     box(draw, (330, 318, 562, 408), fill="#0E1522", outline=BLUE if on else LINE, radius=16, width=3 if on else 2)
-    text(draw, (350, 342), "agent work", WHITE, FONT_H)
+    text(draw, (350, 342), "Codex / Claude", WHITE, FONT_H)
     status = "triage -> code -> checks"
     text(draw, (350, 370), status, GREEN if on else MUTED, FONT_SM)
     if on:
@@ -157,31 +167,31 @@ def frame(idx: int, total: int) -> Image.Image:
     dev_environment(draw, env_on, resources_on)
     code_panel(draw, work_on, max(0, min(1, (phase - 0.64) / 0.22)))
 
-    arrow(draw, (210, 250), (304, 250), CYAN if 0.12 < phase < 0.34 else LINE, 4)
-    arrow(draw, (562, 252), (600, 252), GREEN if 0.32 < phase < 0.62 else LINE, 4)
-    arrow(draw, (600, 345), (562, 372), GREEN if 0.52 < phase < 0.66 else LINE, 4)
-    arrow(draw, (330, 382), (210, 320), BLUE if phase > 0.78 else LINE, 4)
+    arrow(draw, (210, 290), (304, 290), CYAN if 0.12 < phase < 0.34 else LINE, 4)
+    arrow(draw, (446, 292), (446, 318), GREEN if 0.30 < phase < 0.56 else LINE, 4)
+    double_arrow(draw, (562, 364), (596, 330), GREEN if 0.46 < phase < 0.78 else LINE, 4)
+    arrow(draw, (330, 382), (210, 360), BLUE if phase > 0.78 else LINE, 4)
 
     if 0.08 < phase < 0.30:
         p = (phase - 0.08) / 0.22
-        active(draw, (210 + 94 * p, 250), p, CYAN)
+        active(draw, (210 + 94 * p, 290), p, CYAN)
     elif 0.32 < phase < 0.50:
         p = (phase - 0.32) / 0.18
-        active(draw, (562 + 38 * p, 252), p, GREEN)
-    elif 0.52 < phase < 0.64:
-        p = (phase - 0.52) / 0.12
-        active(draw, (600 - 38 * p, 345 + 27 * p), p, GREEN)
+        active(draw, (446, 292 + 26 * p), p, GREEN)
+    elif 0.52 < phase < 0.70:
+        p = (phase - 0.52) / 0.18
+        active(draw, (562 + 34 * p, 364 - 34 * p), p, GREEN)
     elif phase > 0.80:
         p = min(1, (phase - 0.80) / 0.18)
-        active(draw, (330 - 120 * p, 382 - 62 * p), p, BLUE)
+        active(draw, (330 - 120 * p, 382 - 22 * p), p, BLUE)
 
     caption = "Slack trigger"
     if phase > 0.22:
         caption = "Innie starts in your dev environment"
     if phase > 0.40:
-        caption = "Skills and MCPs expose the same workspace resources"
+        caption = "Codex / Claude can access repo, skills, MCPs, and logs"
     if phase > 0.64:
-        caption = "Agent triages the issue and writes code"
+        caption = "Coding agent triages the issue and writes code"
     if phase > 0.82:
         caption = "Result is returned to the Slack thread"
     text(draw, (480, 502), caption, ICE, FONT_H, anchor="mm")
