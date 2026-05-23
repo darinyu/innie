@@ -1,5 +1,10 @@
 # Innie
 
+[![CI](https://github.com/darinyu/innie/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/darinyu/innie/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/innie.svg)](https://pypi.org/project/innie/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 ![Innie wordmark](assets/logo/innie-wordmark.svg)
 
 **Every worker deserves an innie: an AI work-self you can trigger from Slack anywhere, any time.**
@@ -130,7 +135,7 @@ Innie is a Python project built with Hatchling.
 
 ```bash
 python3 -m pip install -e .
-python3 -m pytest
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 Useful local commands:
@@ -200,7 +205,6 @@ Design constraints:
 
 Open-source hygiene still to add:
 
-- `LICENSE` file matching the MIT license declared in `pyproject.toml`.
 - `CONTRIBUTING.md` with development setup, test expectations, and PR guidance.
 - `SECURITY.md` with vulnerability reporting and secret-handling expectations.
 - `CODE_OF_CONDUCT.md` if the project wants an explicit community standard.
@@ -208,6 +212,5 @@ Open-source hygiene still to add:
 
 ## License
 
-`pyproject.toml` declares this project as MIT licensed. A root `LICENSE` file
-still needs to be added before the project should be treated as properly
-packaged for open-source distribution.
+Innie is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE)
+for details.
