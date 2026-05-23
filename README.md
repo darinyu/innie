@@ -4,35 +4,38 @@
 
 **Every worker deserves an innie: an AI work-self you can trigger from Slack anywhere, any time.**
 
+> Innie is an early prototype. The repo contains the first local setup,
+> Slack setup, durable state, hooks, session inspection, Codex and echo adapter
+> paths, and runtime building blocks, but it is not production-ready yet.
+
 ![Innie Slack-to-agent workflow](assets/demo/innie-flow.gif)
+
+## What Is Innie?
 
 Innie is the thinnest customizable layer between Slack and agent harnesses like
 Codex, Claude Code, OpenCode, Goose, and future tools. You run Innie in your own
-dev environment, local or cloud. It keeps the work durable, visible, resumable,
-and observable while the harness does the actual agent work.
+dev environment, local or cloud. It keeps work durable, visible, resumable, and
+observable while the selected harness does the actual agent work.
 
-## What Is Innie And Why?
+The human is the **Outie**: the person who asks from Slack, follows progress,
+and receives the result.
 
-Innie is a **Slack-first sidekick runtime** for AI coding agents and software
-automation agents. It runs in **your dev environment**, local or cloud, so the
-agent can use the same repo, tools, skills, MCPs, credentials, and workspace
-access you already use.
-
-The bet: **harnesses keep getting better**. Codex, Claude Code, OpenCode,
-Goose, and future tools should own planning, coding, permissions, and model
-behavior. Innie owns the **thin product shell** around them:
+The bet is simple: **harnesses keep getting better**. Innie should not replace
+their planning, coding, permissions, tools, or model behavior. Innie owns the
+operating envelope around them:
 
 - **Slack in, Slack out**: trigger work from Slack and get replies back in the
   thread.
-- **Harness-neutral**: switch between Codex CLI, Claude Code, OpenCode, Goose,
-  or future harnesses through adapters.
-- **Your environment, your access**: the agent can do what the selected harness
-  can do in that workspace.
-- **Durable and visible**: sessions, queued follow-ups, progress, schedules,
-  recovery, and observability.
+- **Harness-neutral boundary**: keep Codex CLI, Claude Code, OpenCode, Goose,
+  and custom runtimes behind adapters.
+- **Your environment, your access**: run the harness where your repos, CLIs,
+  MCP servers, credentials, and local tools already work.
+- **Durable by default**: persist sessions, queued follow-ups, progress events,
+  schedules, recovery state, and observability data.
 
-Innie is not a new agent loop, policy engine, or semantic memory system. It is
-the minimum layer that makes a harness feel like a dependable worker.
+Innie is not a new agent loop, policy engine, model runtime, or semantic memory
+system. It is the minimum product shell that can make a harness feel like a
+dependable worker.
 
 ## How It Works
 
@@ -50,7 +53,7 @@ Your dev environment
   repo, tests, skills, MCPs, tools, logs, artifacts
 ```
 
-## Install
+## Quickstart
 
 Clone the repo:
 
@@ -65,16 +68,25 @@ Install the `innie` command from this checkout:
 python3 scripts/install.py
 ```
 
-Start setup:
+Create local state and start setup:
 
 ```bash
 innie init
 ```
 
-`innie init` checks local dependencies, creates durable local state in `.innie/`,
-and then starts the Slack setup wizard.
+To create local state without Slack setup:
 
-For the guided Slack screenshots checklist, see
+```bash
+innie init --skip-slack-setup
+```
+
+To run the Slack setup wizard later:
+
+```bash
+innie slack setup
+```
+
+For the guided Slack checklist, see
 [`docs/slack-setup.md`](docs/slack-setup.md).
 
 ## Run
@@ -112,31 +124,71 @@ Stop it with Ctrl-C.
 Use `--harness echo` when you want to debug Slack routing without starting
 Codex or Claude.
 
-## Dependencies
+## Development
 
-Planned runtime dependencies:
+Innie is a Python project built with Hatchling.
+
+```bash
+python3 -m pip install -e .
+python3 -m pytest
+```
+
+Useful local commands:
+
+```bash
+innie init --skip-slack-setup
+innie status <session-id>
+innie logs <session-id>
+innie cancel <session-id>
+```
+
+Read [`docs/initial-plan.md`](docs/initial-plan.md) for the current product and
+architecture plan.
+
+## Requirements
 
 - Python 3.10+.
 - SQLite 3 for local durable session state.
 - Rich for colored, wrapped terminal setup screens. `scripts/install.py` asks
   before installing it, and Innie falls back to plain text if you skip it.
-- A Slack app for DM and channel mention triggers. Innie should provide a Slack
-  app setup wizard through `innie slack setup`.
+- A Slack app for DM and channel mention triggers.
 - Codex CLI or Claude Code CLI. Codex remains the default; Claude is opt-in via
   `--harness claude`. OpenCode, Goose, and custom runtimes are future adapters.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
   environment.
 
-## Contribute
+## Local State And Secrets
 
-Good first contributions:
+Innie stores local runtime state under `.innie/` in the selected workspace.
+Slack tokens and generated Slack metadata are part of that setup flow.
+
+Do not commit `.innie/` or Slack credentials. The prototype is designed for
+local development first, so review generated files and permissions before using
+it in a shared or remote environment.
+
+## Roadmap
+
+Near-term prototype milestones:
+
+- Harden the Codex path into the first stable adapter contract.
+- Improve Slack-triggered task progress and result delivery.
+- Persist enough state to explain, retry, or resume interrupted work.
+- Make lifecycle hooks stable enough for local customization.
+- Improve observability events, status output, and failure diagnostics.
+- Add production-oriented docs after the local prototype proves the core loop.
+
+## Contributing
+
+This repo is still early, so small, focused PRs are the best way to contribute.
+
+Good first areas:
 
 - Tighten the Slack onboarding flow.
-- Implement the SQLite session store.
-- Add the first harness adapter.
-- Improve lifecycle hooks.
+- Improve setup validation and error messages.
+- Add focused tests for session, hook, runtime, and adapter behavior.
+- Implement or refine a harness adapter.
 - Improve observability events and status output.
-- Refine the README, logo, or demo animation.
+- Refine docs, logo assets, and demo materials.
 
 Design constraints:
 
@@ -146,5 +198,16 @@ Design constraints:
 - Keep harness behavior behind adapters.
 - Prefer simple local defaults before distributed infrastructure.
 
-Read the [initial plan](docs/initial-plan.md), open an issue, or send a small
-PR.
+Open-source hygiene still to add:
+
+- `LICENSE` file matching the MIT license declared in `pyproject.toml`.
+- `CONTRIBUTING.md` with development setup, test expectations, and PR guidance.
+- `SECURITY.md` with vulnerability reporting and secret-handling expectations.
+- `CODE_OF_CONDUCT.md` if the project wants an explicit community standard.
+- GitHub issue templates once the contribution surface is clearer.
+
+## License
+
+`pyproject.toml` declares this project as MIT licensed. A root `LICENSE` file
+still needs to be added before the project should be treated as properly
+packaged for open-source distribution.
