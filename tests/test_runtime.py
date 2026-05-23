@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -80,6 +81,74 @@ class FailingStreamAdapter:
         return []
 
 
+class BlockingAdapter:
+    harness_id = "blocking"
+    capabilities = HarnessCapabilities(supports_streaming=True)
+
+    def __init__(self) -> None:
+        self.started: list[str] = []
+        self.active = 0
+        self.max_active = 0
+        self.release = asyncio.Event()
+
+    async def start_task(self, request):
+        self.started.append(request.session_id)
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        yield HarnessEvent(type="progress", message=f"running {task_id}")
+        await self.release.wait()
+        self.active -= 1
+        yield HarnessEvent(type="output", message=f"done {task_id}")
+        yield HarnessEvent(type="completed")
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+
+class SequentialSessionAdapter:
+    harness_id = "sequential"
+    capabilities = HarnessCapabilities(supports_streaming=True)
+
+    def __init__(self) -> None:
+        self.active_by_session: dict[str, int] = {}
+        self.max_active_by_session: dict[str, int] = {}
+        self.session_by_task: dict[str, str] = {}
+
+    async def start_task(self, request):
+        self.session_by_task[request.task_id] = request.session_id
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        session_id = self.session_by_task[task_id]
+        self.active_by_session[session_id] = self.active_by_session.get(session_id, 0) + 1
+        self.max_active_by_session[session_id] = max(
+            self.max_active_by_session.get(session_id, 0),
+            self.active_by_session[session_id],
+        )
+        await asyncio.sleep(0)
+        self.active_by_session[session_id] -= 1
+        yield HarnessEvent(type="output", message=f"done {task_id}")
+        yield HarnessEvent(type="completed")
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+
 def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_ts: str | None = None) -> SlackTrigger:
     return SlackTrigger(
         event_id=event_id,
@@ -94,6 +163,180 @@ def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_t
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_worker_pool_processes_different_sessions_concurrently(self) -> None:
+        async def run_manager(manager: SessionManager, adapter: BlockingAdapter) -> None:
+            run_task = asyncio.create_task(manager.run_until_idle())
+            while len(adapter.started) < 2:
+                await asyncio.sleep(0)
+            self.assertEqual(2, adapter.active)
+            adapter.release.set()
+            await run_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            for item in (make_trigger("Ev1", "D1", "100.1"), make_trigger("Ev2", "D2", "200.1")):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="blocking")
+                enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = BlockingAdapter()
+            manager = SessionManager(path, adapters={"blocking": adapter}, workspace=Path(tmp), max_workers=2)
+            try:
+                asyncio.run(run_manager(manager, adapter))
+            finally:
+                manager.close()
+
+            self.assertEqual(2, adapter.max_active)
+
+    def test_worker_pool_preserves_same_session_ordering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            root = make_trigger("Ev1", "D1", "100.1")
+            followup = make_trigger("Ev2", "D1", "100.2", thread_ts="100.1")
+            for item in (root, followup):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="sequential")
+                enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = SequentialSessionAdapter()
+            manager = SessionManager(path, adapters={"sequential": adapter}, workspace=Path(tmp), max_workers=2)
+            try:
+                asyncio.run(manager.run_until_idle())
+                inbox_statuses = [
+                    row["status"]
+                    for row in manager.db.execute("SELECT status FROM session_inbox ORDER BY id")
+                ]
+            finally:
+                manager.close()
+
+            self.assertEqual(["done", "done"], inbox_statuses)
+            self.assertEqual([1], list(adapter.max_active_by_session.values()))
+
+    def test_manager_recovers_stale_processing_work_on_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1", "D1", "100.1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            row = enqueue_trigger(db, session=session, trigger=item)
+            db.execute(
+                """
+                INSERT INTO tasks(id, session_id, status, goal, output_target, harness_id, execution_mode)
+                VALUES('task_stale', ?, 'running', 'stale work', ?, 'scripted', 'autonomous')
+                """,
+                (session.id, session.output_target),
+            )
+            db.execute("UPDATE session_inbox SET status = 'processing' WHERE id = ?", (row.id,))
+            db.execute(
+                """
+                UPDATE sessions
+                SET status = 'running',
+                    locked_by = 'dead-worker',
+                    locked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-120 seconds'),
+                    lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-60 seconds')
+                WHERE id = ?
+                """,
+                (session.id,),
+            )
+            db.commit()
+            db.close()
+
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="output", message="recovered"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                workspace=Path(tmp),
+                event_output=terminal.append,
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+                statuses = {
+                    row["id"]: row["status"]
+                    for row in manager.db.execute("SELECT id, status FROM tasks ORDER BY id")
+                }
+                session_row = manager.db.execute("SELECT locked_by, status FROM sessions WHERE id = ?", (session.id,)).fetchone()
+                recovery_events = [
+                    row["event_type"]
+                    for row in manager.db.execute("SELECT event_type FROM task_events WHERE session_id = ?", (session.id,))
+                ]
+            finally:
+                manager.close()
+
+            self.assertEqual("interrupted", statuses["task_stale"])
+            self.assertIn("completed", statuses.values())
+            self.assertIsNone(session_row["locked_by"])
+            self.assertEqual("idle", session_row["status"])
+            self.assertIn("worker.recovery.startup", recovery_events)
+            self.assertIn("startup recovery", "\n".join(terminal))
+
+    def test_manager_logs_worker_claim_release_and_compact_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1", "D1", "100.1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="output", message="done"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                workspace=Path(tmp),
+                event_output=terminal.append,
+                max_workers=2,
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+                worker_events = [
+                    (row["event_type"], json.loads(row["payload_json"]))
+                    for row in manager.db.execute(
+                        """
+                        SELECT event_type, payload_json
+                        FROM task_events
+                        WHERE session_id = ? AND event_type LIKE 'worker.%'
+                        ORDER BY id
+                        """,
+                        (session.id,),
+                    )
+                ]
+            finally:
+                manager.close()
+
+            self.assertTrue(any(line.startswith("workers: total=2 ") for line in terminal))
+            event_types = [event_type for event_type, _ in worker_events]
+            self.assertIn("worker.inbox.claimed", event_types)
+            self.assertIn("worker.session.released", event_types)
+            claim_payload = next(payload for event_type, payload in worker_events if event_type == "worker.inbox.claimed")
+            self.assertIn("run_id", claim_payload)
+            self.assertEqual("worker-1", claim_payload["worker_id"])
+            self.assertEqual(session.id, claim_payload["session_id"])
+
     def test_manager_processes_sessions_concurrently_until_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
@@ -291,12 +534,20 @@ class RuntimeTest(unittest.TestCase):
             try:
                 asyncio.run(manager.run_until_idle())
                 task_status = manager.db.execute("SELECT status FROM tasks").fetchone()["status"]
+                slack_failures = [
+                    json.loads(row["payload_json"])
+                    for row in manager.db.execute(
+                        "SELECT payload_json FROM task_events WHERE event_type = 'worker.slack_delivery_failed'"
+                    )
+                ]
             finally:
                 manager.close()
 
             self.assertEqual("completed", task_status)
             self.assertIn(("D1", "100.1", "final answer"), slack.messages)
             self.assertIn("slack progress post failed", "\n".join(terminal))
+            self.assertEqual("progress_post", slack_failures[0]["operation"])
+            self.assertIn("rate_limited", slack_failures[0]["error"])
 
     def test_manager_continues_when_progress_update_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

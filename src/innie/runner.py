@@ -28,6 +28,7 @@ class RunOnceResult:
     payload: dict | None = None
     session_status: str | None = None
     harness_id: str | None = None
+    resolved_slack: Any | None = None
 
 
 class ConsoleSlackClient:
@@ -65,6 +66,7 @@ def run_once_event_file(
     slack: ConsoleSlackClient | None = None,
     verbose: bool = False,
     output: OutputFn | None = None,
+    max_workers: int = 7,
 ) -> RunOnceResult:
     payload = json.loads(event_file.read_text(encoding="utf-8"))
     return run_once_payload(
@@ -76,6 +78,7 @@ def run_once_event_file(
         slack=slack or ConsoleSlackClient(),
         verbose=verbose,
         output=output,
+        max_workers=max_workers,
     )
 
 
@@ -90,6 +93,7 @@ def run_once_payload(
     adapters: dict[str, HarnessAdapter] | None = None,
     verbose: bool = False,
     output: OutputFn | None = None,
+    max_workers: int = 7,
 ) -> RunOnceResult:
     return asyncio.run(
         process_payload(
@@ -102,6 +106,7 @@ def run_once_payload(
             adapters=adapters,
             verbose=verbose,
             output=output,
+            max_workers=max_workers,
         )
     )
 
@@ -117,6 +122,7 @@ def run_once_socket(
     adapters: dict[str, HarnessAdapter] | None = None,
     output: OutputFn | None = None,
     verbose: bool = False,
+    max_workers: int = 7,
 ) -> RunOnceResult:
     return asyncio.run(
         _run_until_accepted_socket_async(
@@ -129,6 +135,7 @@ def run_once_socket(
             adapters=adapters,
             output=output,
             verbose=verbose,
+            max_workers=max_workers,
         )
     )
 
@@ -144,6 +151,7 @@ def run_forever_socket(
     adapters: dict[str, HarnessAdapter] | None = None,
     output: OutputFn = print,
     verbose: bool = False,
+    max_workers: int = 7,
 ) -> int:
     return asyncio.run(
         _run_forever_socket_async(
@@ -156,6 +164,7 @@ def run_forever_socket(
             adapters=adapters,
             output=output,
             verbose=verbose,
+            max_workers=max_workers,
         )
     )
 
@@ -171,9 +180,11 @@ async def _run_forever_socket_async(
     adapters: dict[str, HarnessAdapter] | None,
     output: OutputFn,
     verbose: bool,
+    max_workers: int,
 ) -> int:
     accepted_count = 0
     seen_count = 0
+    drain_task: asyncio.Task | None = None
     while True:
         try:
             output(f"waiting for Slack event #{seen_count + 1}")
@@ -188,14 +199,37 @@ async def _run_forever_socket_async(
                 verbose=verbose,
                 output=output,
                 announce_acceptance=False,
+                max_workers=max_workers,
+                drain=False,
             )
         except KeyboardInterrupt:
+            if drain_task is not None:
+                try:
+                    await drain_task
+                except Exception as exc:
+                    output(f"worker drain failed during shutdown: {exc}")
             output(f"stopped after {accepted_count} accepted event(s)")
             return accepted_count
         seen_count += 1
         if result.accepted:
             accepted_count += 1
             output(format_run_acceptance(result))
+            if drain_task is None or drain_task.done():
+                if drain_task is not None:
+                    try:
+                        drain_task.result()
+                    except Exception as exc:
+                        output(f"worker drain failed: {exc}")
+                drain_task = asyncio.create_task(
+                    _drain_workspace(
+                        workspace,
+                        slack=result.resolved_slack or slack,
+                        adapters=adapters,
+                        verbose=verbose,
+                        output=output,
+                        max_workers=max_workers,
+                    )
+                )
         else:
             output(f"ignored event: {result.reason} {describe_slack_payload(result.payload)}".rstrip())
 
@@ -212,6 +246,8 @@ async def _run_once_socket_async(
     verbose: bool = False,
     output: OutputFn | None = None,
     announce_acceptance: bool = True,
+    max_workers: int = 7,
+    drain: bool = True,
 ) -> RunOnceResult:
     workspace = workspace.resolve()
     config = read_workspace_config(workspace)
@@ -235,6 +271,8 @@ async def _run_once_socket_async(
         verbose=verbose,
         output=output,
         announce_acceptance=announce_acceptance,
+        max_workers=max_workers,
+        drain=drain,
     )
 
 
@@ -249,6 +287,7 @@ async def _run_until_accepted_socket_async(
     adapters: dict[str, HarnessAdapter] | None,
     output: OutputFn | None,
     verbose: bool,
+    max_workers: int,
 ) -> RunOnceResult:
     while True:
         result = await _run_once_socket_async(
@@ -261,6 +300,7 @@ async def _run_until_accepted_socket_async(
             adapters=adapters,
             verbose=verbose,
             output=output,
+            max_workers=max_workers,
         )
         if result.accepted:
             return result
@@ -280,6 +320,8 @@ async def process_payload(
     verbose: bool = False,
     output: OutputFn | None = None,
     announce_acceptance: bool = True,
+    max_workers: int = 7,
+    drain: bool = True,
 ) -> RunOnceResult:
     workspace = workspace.resolve()
     db_path = innie_dir(workspace) / "innie.db"
@@ -313,22 +355,45 @@ async def process_payload(
         payload=payload,
         session_status=session_status,
         harness_id=accepted.session.harness_id,
+        resolved_slack=slack,
     )
     if verbose and announce_acceptance and output is not None:
         output(format_run_acceptance(result))
 
+    if drain:
+        await _drain_workspace(
+            workspace,
+            slack=slack,
+            adapters=adapters,
+            verbose=verbose,
+            output=output,
+            max_workers=max_workers,
+        )
+    return result
+
+
+async def _drain_workspace(
+    workspace: Path,
+    *,
+    slack,
+    adapters: dict[str, HarnessAdapter] | None,
+    verbose: bool,
+    output: OutputFn | None,
+    max_workers: int,
+) -> None:
+    db_path = innie_dir(workspace) / "innie.db"
     manager = SessionManager(
         db_path,
         adapters=adapters or adapter_map(verbose=verbose, output=output),
         slack=slack,
         workspace=workspace,
         event_output=output if verbose else None,
+        max_workers=max_workers,
     )
     try:
         await manager.run_until_idle()
     finally:
         manager.close()
-    return result
 
 
 def format_run_acceptance(result: RunOnceResult) -> str:

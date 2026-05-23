@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
-from innie.harness import HarnessEvent, ScriptedHarnessAdapter
+from innie.config import write_secrets
+from innie.harness import HarnessCapabilities, HarnessEvent, ScriptedHarnessAdapter, TaskHandle
 from innie.progress import SLACK_FINAL_TEXT_LIMIT, SLACK_TEXT_LIMIT
 from innie.runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_payload, run_once_socket
 
@@ -364,6 +367,171 @@ class RunnerTest(unittest.TestCase):
             self.assertIn("stopped after 2 accepted event(s)", printed)
             self.assertIn("message D1 100.1 first", printed)
             self.assertIn("message D1 100.2 second", printed)
+
+    def test_run_forever_socket_keeps_receiving_while_worker_is_busy(self) -> None:
+        class GateAdapter:
+            harness_id = "gate"
+            capabilities = HarnessCapabilities(supports_streaming=True)
+
+            def __init__(self) -> None:
+                self.second_event_seen = False
+
+            async def start_task(self, request):
+                return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+            async def send_input(self, task_id: str, input: str) -> None:
+                raise NotImplementedError
+
+            async def cancel_task(self, task_id: str) -> None:
+                pass
+
+            async def stream_events(self, task_id: str):
+                while not self.second_event_seen:
+                    await asyncio.sleep(0)
+                yield HarnessEvent(type="output", message="done")
+                yield HarnessEvent(type="completed")
+
+            async def collect_artifacts(self, task_id: str):
+                return []
+
+        class FakeEventSource:
+            def __init__(self, adapter: GateAdapter) -> None:
+                self._payloads = [payload("first"), payload("second")]
+                self._payloads[1]["event_id"] = "Ev2"
+                self._payloads[1]["event"]["ts"] = "200.1"
+                self._adapter = adapter
+
+            async def receive_once(self) -> dict:
+                if not self._payloads:
+                    raise KeyboardInterrupt
+                item = self._payloads.pop(0)
+                if item["event_id"] == "Ev2":
+                    self._adapter.second_event_seen = True
+                return item
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = GateAdapter()
+            printed: list[str] = []
+            processed = run_forever_socket(
+                Path(tmp),
+                harness_id="gate",
+                bot_user_id="U_BOT",
+                slack=ConsoleSlackClient(output=printed.append),
+                event_source=FakeEventSource(adapter),
+                adapters={"gate": adapter},
+                output=printed.append,
+            )
+
+            self.assertEqual(2, processed)
+            self.assertIn("waiting for Slack event #2", printed)
+            self.assertIn("message D1 100.1 done", printed)
+            self.assertIn("message D1 200.1 done", printed)
+
+    def test_run_forever_socket_starts_new_session_while_first_task_is_running(self) -> None:
+        class OverlapAdapter:
+            harness_id = "overlap"
+            capabilities = HarnessCapabilities(supports_streaming=True)
+
+            def __init__(self) -> None:
+                self.goal_by_task: dict[str, str] = {}
+                self.second_started_before_first_completed = False
+                self.first_completed = False
+                self.first_stream_started = False
+
+            async def start_task(self, request):
+                self.goal_by_task[request.task_id] = request.goal
+                return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+            async def send_input(self, task_id: str, input: str) -> None:
+                raise NotImplementedError
+
+            async def cancel_task(self, task_id: str) -> None:
+                pass
+
+            async def stream_events(self, task_id: str):
+                goal = self.goal_by_task[task_id]
+                if goal == "first":
+                    self.first_stream_started = True
+                    for _ in range(20):
+                        await asyncio.sleep(0)
+                    for _ in range(200):
+                        if "second" in self.goal_by_task.values():
+                            self.second_started_before_first_completed = True
+                            break
+                        await asyncio.sleep(0.001)
+                    self.first_completed = True
+                yield HarnessEvent(type="output", message=f"done {goal}")
+                yield HarnessEvent(type="completed")
+
+            async def collect_artifacts(self, task_id: str):
+                return []
+
+        class FakeEventSource:
+            def __init__(self, adapter: OverlapAdapter) -> None:
+                self._payloads = [payload("first"), payload("second")]
+                self._payloads[1]["event_id"] = "Ev2"
+                self._payloads[1]["event"]["ts"] = "200.1"
+                self._adapter = adapter
+
+            async def receive_once(self) -> dict:
+                if not self._payloads:
+                    raise KeyboardInterrupt
+                if self._payloads[0]["event"]["text"] == "second":
+                    while not self._adapter.first_stream_started:
+                        await asyncio.sleep(0)
+                    for _ in range(20):
+                        await asyncio.sleep(0)
+                return self._payloads.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = OverlapAdapter()
+            run_forever_socket(
+                Path(tmp),
+                harness_id="overlap",
+                bot_user_id="U_BOT",
+                slack=ConsoleSlackClient(output=lambda _line: None),
+                event_source=FakeEventSource(adapter),
+                adapters={"overlap": adapter},
+                output=lambda _line: None,
+            )
+
+            self.assertTrue(adapter.first_completed)
+            self.assertTrue(adapter.second_started_before_first_completed)
+
+    def test_run_forever_socket_background_workers_use_resolved_slack_client(self) -> None:
+        class RecordingSlack(ConsoleSlackClient):
+            def __init__(self) -> None:
+                super().__init__(output=lambda _line: None)
+                self.messages: list[tuple[str, str, str]] = []
+
+            def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+                self.messages.append((channel, thread_ts, text))
+                return thread_ts
+
+        class FakeEventSource:
+            def __init__(self) -> None:
+                self._payloads = [payload("hello without explicit slack")]
+
+            async def receive_once(self) -> dict:
+                if not self._payloads:
+                    raise KeyboardInterrupt
+                return self._payloads.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            write_secrets(workspace, {"slack_bot_token": "xoxb-test"})
+            slack = RecordingSlack()
+
+            with mock.patch("innie.runner.SlackWebClient", return_value=slack):
+                run_forever_socket(
+                    workspace,
+                    harness_id="echo",
+                    bot_user_id="U_BOT",
+                    event_source=FakeEventSource(),
+                    output=lambda _line: None,
+                )
+
+            self.assertIn(("D1", "100.1", "hello without explicit slack"), slack.messages)
 
     def test_run_forever_socket_reports_existing_session_for_thread_reply(self) -> None:
         class FakeEventSource:

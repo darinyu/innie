@@ -5,12 +5,19 @@ import json
 from pathlib import Path
 import sqlite3
 from typing import Callable
+import uuid
 
 from .adapters import CodexCliAdapter
 from .control import SlackReplyClient
 from .db import connect, initialize_schema
 from .harness import HarnessAdapter, HarnessEvent, TaskRequest
-from .inbox import claim_next_inbox_row, mark_inbox_done
+from .inbox import (
+    claim_next_available_inbox_row,
+    claim_next_inbox_row,
+    mark_inbox_done,
+    release_session_lock,
+    renew_session_lock,
+)
 from .progress import SlackProgressRenderer
 from .sessions import get_session
 from .tasks import (
@@ -94,6 +101,113 @@ class SessionActor:
 
         _set_session_status(self._db, self.session_id, "canceled")
         self._db.commit()
+
+    async def run_claimed_row(self, row, *, worker_id: str, run_id: str) -> None:
+        lock_expires_at = _session_lock_expires_at(self._db, self.session_id)
+        _append_event(
+            self._db,
+            self.session_id,
+            "worker.inbox.claimed",
+            {
+                "run_id": run_id,
+                "worker_id": worker_id,
+                "session_id": self.session_id,
+                "inbox_id": row.id,
+                "text": row.text,
+                "lock_expires_at": lock_expires_at,
+                "status": "processing",
+            },
+        )
+        session = get_session(self._db, self.session_id)
+        harness_id = session.harness_id or "codex"
+        adapter = self._adapters[harness_id]
+        task: TaskRecord | None = None
+        terminal_status = "failed"
+        stop_renewal = asyncio.Event()
+        renewal_task = asyncio.create_task(
+            self._renew_session_lock_until_stopped(worker_id=worker_id, run_id=run_id, stop=stop_renewal)
+        )
+        try:
+            task = create_task(
+                self._db,
+                session_id=self.session_id,
+                goal=row.text,
+                output_target=session.output_target,
+                harness_id=harness_id,
+                execution_mode="autonomous",
+            )
+            record_adapter_capabilities(self._db, harness_id, adapter.capabilities)
+            set_task_status(self._db, task.id, "running")
+            self._db.commit()
+
+            terminal_status = await self._run_harness_turn(adapter, task, row)
+            if terminal_status == "completed":
+                record_artifacts(self._db, task, await adapter.collect_artifacts(task.id))
+        except Exception as exc:
+            terminal_status = "failed"
+            if task is not None:
+                failed_event = HarnessEvent(type="failed", message=str(exc) or exc.__class__.__name__)
+                append_harness_event(self._db, task, failed_event)
+                self._post_terminal_event(task.id, failed_event)
+                self._post_progress(task.id, failed_event, row)
+        finally:
+            stop_renewal.set()
+            await renewal_task
+            if task is not None:
+                set_task_status(self._db, task.id, terminal_status)
+            mark_inbox_done(self._db, row.id)
+            if _session_status(self._db, self.session_id) != "canceled":
+                _set_session_status(self._db, self.session_id, "idle")
+            release_session_lock(self._db, self.session_id, worker_id=worker_id)
+            _append_event(
+                self._db,
+                self.session_id,
+                "worker.session.released",
+                {
+                    "run_id": run_id,
+                    "worker_id": worker_id,
+                    "session_id": self.session_id,
+                    "inbox_id": row.id,
+                    "task_id": None if task is None else task.id,
+                    "status": terminal_status,
+                },
+            )
+            self._db.commit()
+
+    async def _renew_session_lock_until_stopped(
+        self,
+        *,
+        worker_id: str,
+        run_id: str,
+        stop: asyncio.Event,
+        lease_seconds: int = 120,
+    ) -> None:
+        interval = max(1.0, lease_seconds / 3)
+        while True:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                renewed = renew_session_lock(
+                    self._db,
+                    self.session_id,
+                    worker_id=worker_id,
+                    lease_seconds=lease_seconds,
+                )
+                lock_expires_at = _session_lock_expires_at(self._db, self.session_id)
+                _append_event(
+                    self._db,
+                    self.session_id,
+                    "worker.session.lock_renewed",
+                    {
+                        "run_id": run_id,
+                        "worker_id": worker_id,
+                        "session_id": self.session_id,
+                        "renewed": renewed,
+                        "lock_expires_at": lock_expires_at,
+                    },
+                )
+                self._db.commit()
 
     async def _run_harness_turn(self, adapter: HarnessAdapter, task: TaskRecord, row) -> str:
         start_event = HarnessEvent(type="started")
@@ -205,6 +319,13 @@ class SessionActor:
             self._post_final_messages(channel=channel, thread_ts=thread_ts, messages=messages[1:], task_id=task_id)
         except Exception as exc:
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack final update failed: {exc}")
+            _append_runtime_event(
+                self._db,
+                self.session_id,
+                task_id,
+                "worker.slack_delivery_failed",
+                {"operation": "final_update", "channel": current_channel, "ts": ts, "error": str(exc)},
+            )
             self._delete_slack_message(current_channel, ts, task_id, "progress")
             self._post_final_messages(channel=channel, thread_ts=thread_ts, messages=messages, task_id=task_id, fallback=True)
 
@@ -219,6 +340,18 @@ class SessionActor:
                 if task_id is not None:
                     label = "fallback" if fallback else "post"
                     self._post_terminal_line(f"session {self.session_id} task {task_id} slack final {label} failed: {exc}")
+                    _append_runtime_event(
+                        self._db,
+                        self.session_id,
+                        task_id,
+                        "worker.slack_delivery_failed",
+                        {
+                            "operation": "final_fallback_post" if fallback else "final_post",
+                            "channel": channel,
+                            "thread_ts": thread_ts,
+                            "error": str(exc),
+                        },
+                    )
 
     def _upsert_progress_message(
         self,
@@ -237,6 +370,18 @@ class SessionActor:
                 ts = self._slack.post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
             except Exception as exc:
                 self._post_terminal_line(f"session {self.session_id} task {task_id} slack progress post failed: {exc}")
+                _append_runtime_event(
+                    self._db,
+                    self.session_id,
+                    task_id,
+                    "worker.slack_delivery_failed",
+                    {
+                        "operation": "progress_post",
+                        "channel": channel,
+                        "thread_ts": thread_ts,
+                        "error": str(exc),
+                    },
+                )
                 return
             if ts:
                 self._progress_messages[task_id] = (channel, ts)
@@ -248,6 +393,13 @@ class SessionActor:
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack progress updated ts={ts}")
         except Exception as exc:
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack progress update failed ts={ts}: {exc}")
+            _append_runtime_event(
+                self._db,
+                self.session_id,
+                task_id,
+                "worker.slack_delivery_failed",
+                {"operation": "progress_update", "channel": current_channel, "ts": ts, "error": str(exc)},
+            )
             self._progress_messages.pop(task_id, None)
             self._delete_slack_message(current_channel, ts, task_id, "progress")
 
@@ -268,6 +420,13 @@ class SessionActor:
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack {label} deleted ts={ts}")
         except Exception as exc:
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack {label} delete failed ts={ts}: {exc}")
+            _append_runtime_event(
+                self._db,
+                self.session_id,
+                task_id,
+                "worker.slack_delivery_failed",
+                {"operation": f"{label}_delete", "channel": channel, "ts": ts, "error": str(exc)},
+            )
 
     def _post_terminal_event(self, task_id: str, event: HarnessEvent) -> None:
         if event.type == "started":
@@ -296,6 +455,7 @@ class SessionManager:
         slack: SlackReplyClient | None = None,
         workspace: Path | None = None,
         event_output: EventOutput | None = None,
+        max_workers: int = 7,
     ) -> None:
         self.db_path = db_path
         self.db = connect(db_path)
@@ -306,6 +466,9 @@ class SessionManager:
         self.progress = SlackProgressRenderer()
         self.event_output = event_output
         self.actors: dict[str, SessionActor] = {}
+        self.max_workers = max(1, max_workers)
+        self.run_id = f"run_{uuid.uuid4().hex[:16]}"
+        self._running_workers: set[str] = set()
 
     def close(self) -> None:
         self.db.close()
@@ -337,16 +500,131 @@ class SessionManager:
         return list(self.actors)
 
     async def run_until_idle(self) -> None:
-        self.hydrate()
+        self.recover_stale_work()
+        self._emit_worker_heartbeat()
+        workers = [
+            asyncio.create_task(self._worker_loop(f"worker-{index + 1}"))
+            for index in range(self.max_workers)
+        ]
+        await asyncio.gather(*workers)
+
+    def recover_stale_work(self) -> None:
+        rows = self.db.execute(
+            """
+            SELECT DISTINCT s.id
+            FROM sessions s
+            LEFT JOIN session_inbox i ON i.session_id = s.id AND i.status = 'processing'
+            LEFT JOIN tasks t ON t.session_id = s.id AND t.status = 'running'
+            WHERE s.locked_by IS NOT NULL
+               OR s.status = 'running'
+               OR i.id IS NOT NULL
+               OR t.id IS NOT NULL
+            ORDER BY s.created_at ASC
+            """
+        ).fetchall()
+        for row in rows:
+            session_id = row["id"]
+            running_tasks = [
+                task["id"]
+                for task in self.db.execute(
+                    "SELECT id FROM tasks WHERE session_id = ? AND status = 'running'",
+                    (session_id,),
+                ).fetchall()
+            ]
+            processing_inbox = [
+                inbox["id"]
+                for inbox in self.db.execute(
+                    "SELECT id FROM session_inbox WHERE session_id = ? AND status = 'processing'",
+                    (session_id,),
+                ).fetchall()
+            ]
+            self.db.execute(
+                """
+                UPDATE tasks
+                SET status = 'interrupted',
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE session_id = ? AND status = 'running'
+                """,
+                (session_id,),
+            )
+            self.db.execute(
+                """
+                UPDATE session_inbox
+                SET status = 'queued'
+                WHERE session_id = ? AND status = 'processing'
+                """,
+                (session_id,),
+            )
+            release_session_lock(self.db, session_id)
+            if _session_status(self.db, session_id) == "running":
+                _set_session_status(self.db, session_id, "idle")
+            _append_event(
+                self.db,
+                session_id,
+                "worker.recovery.startup",
+                {
+                    "run_id": self.run_id,
+                    "session_id": session_id,
+                    "tasks_interrupted": running_tasks,
+                    "inbox_requeued": processing_inbox,
+                },
+            )
+            if self.event_output is not None:
+                self.event_output(
+                    f"session {session_id} startup recovery: "
+                    f"interrupted_tasks={len(running_tasks)} requeued_inbox={len(processing_inbox)}"
+                )
+        self.db.commit()
+
+    async def _worker_loop(self, worker_id: str) -> None:
         while True:
-            active = [actor.run_until_idle() for actor in self.actors.values()]
-            if not active:
+            row = claim_next_available_inbox_row(self.db, worker_id=worker_id)
+            self.db.commit()
+            if row is None:
+                if self._running_workers:
+                    await asyncio.sleep(0.01)
+                    continue
                 return
-            await asyncio.gather(*active)
-            self.actors.clear()
-            self.hydrate()
-            if not self.actors:
-                return
+            self._running_workers.add(worker_id)
+            self._emit_worker_heartbeat()
+            actor = SessionActor(
+                self.db,
+                row.session_id,
+                adapters=self.adapters,
+                slack=self.slack,
+                workspace=self.workspace,
+                progress=self.progress,
+                event_output=self.event_output,
+            )
+            try:
+                await actor.run_claimed_row(row, worker_id=worker_id, run_id=self.run_id)
+            finally:
+                self._running_workers.discard(worker_id)
+                self._emit_worker_heartbeat()
+
+    def _emit_worker_heartbeat(self) -> None:
+        if self.event_output is None:
+            return
+        running = len(self._running_workers)
+        queued = self.db.execute(
+            "SELECT COUNT(*) AS count FROM session_inbox WHERE status = 'queued'"
+        ).fetchone()["count"]
+        locked = self.db.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sessions
+            WHERE locked_by IS NOT NULL
+              AND (
+                lock_expires_at IS NULL
+                OR lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              )
+            """
+        ).fetchone()["count"]
+        self.event_output(
+            f"workers: total={self.max_workers} idle={self.max_workers - running} "
+            f"running={running} queued={queued} locked_sessions={locked}"
+        )
 
 
 def _set_session_status(db: sqlite3.Connection, session_id: str, status: str) -> None:
@@ -366,6 +644,11 @@ def _session_status(db: sqlite3.Connection, session_id: str) -> str:
     return "" if row is None else row["status"]
 
 
+def _session_lock_expires_at(db: sqlite3.Connection, session_id: str) -> str | None:
+    row = db.execute("SELECT lock_expires_at FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return None if row is None else row["lock_expires_at"]
+
+
 def _append_event(db: sqlite3.Connection, session_id: str, event_type: str, payload: dict) -> None:
     db.execute(
         """
@@ -373,6 +656,22 @@ def _append_event(db: sqlite3.Connection, session_id: str, event_type: str, payl
         VALUES(?, ?, ?)
         """,
         (session_id, event_type, json.dumps(payload, sort_keys=True)),
+    )
+
+
+def _append_runtime_event(
+    db: sqlite3.Connection,
+    session_id: str,
+    task_id: str | None,
+    event_type: str,
+    payload: dict,
+) -> None:
+    db.execute(
+        """
+        INSERT INTO task_events(session_id, task_id, event_type, payload_json)
+        VALUES(?, ?, ?, ?)
+        """,
+        (session_id, task_id, event_type, json.dumps(payload, sort_keys=True)),
     )
 
 

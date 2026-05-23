@@ -112,6 +112,9 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         """
     )
     _ensure_column(db, "slack_triggers", "session_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")
+    _ensure_column(db, "sessions", "locked_by", "TEXT")
+    _ensure_column(db, "sessions", "locked_at", "TEXT")
+    _ensure_column(db, "sessions", "lock_expires_at", "TEXT")
     _ensure_column(db, "task_events", "task_id", "TEXT REFERENCES tasks(id) ON DELETE CASCADE")
     _ensure_column(db, "artifacts", "task_id", "TEXT REFERENCES tasks(id) ON DELETE CASCADE")
     _ensure_column(db, "artifacts", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -145,6 +148,18 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS idx_hook_events_dedupe_key
         ON hook_events(dedupe_key)
         WHERE dedupe_key IS NOT NULL
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_session_inbox_status_id
+        ON session_inbox(status, id)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sessions_lock_expires_at
+        ON sessions(lock_expires_at)
         """
     )
 

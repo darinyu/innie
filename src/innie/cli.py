@@ -65,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--once", action="store_true", help="Process one event and exit")
     run_parser.add_argument("--event-file", type=Path, default=None, help="Slack event payload JSON file")
     run_parser.add_argument("--harness", choices=("echo", "codex"), default="codex", help="Harness adapter to use")
+    run_parser.add_argument("--max-workers", type=int, default=7, help="Maximum concurrent harness workers")
     run_parser.add_argument("--bot-user-id", default="U_BOT", help="Bot user id for local event-file runs")
     run_parser.add_argument("--watched-user-id", default=None, help="Optional watched user id for mention mode")
     run_parser.add_argument("--verbose", action="store_true", help="Print verbose runtime diagnostics")
@@ -133,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
                     watched_user_id=args.watched_user_id,
                     output=run_output,
                     verbose=args.verbose,
+                    max_workers=args.max_workers,
                 )
             else:
                 run_output("Socket Mode enabled; listening until interrupted with Ctrl-C...")
@@ -143,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
                     watched_user_id=args.watched_user_id,
                     output=run_output,
                     verbose=args.verbose,
+                    max_workers=args.max_workers,
                 )
                 return 0
         else:
@@ -156,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 slack=ConsoleSlackClient(),
                 verbose=args.verbose,
                 output=run_output,
+                max_workers=args.max_workers,
             )
         if not result.accepted:
             run_output(f"ignored event: {result.reason}")
