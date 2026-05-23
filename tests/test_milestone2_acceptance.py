@@ -90,7 +90,7 @@ class Milestone2AcceptanceTest(unittest.TestCase):
                 manager.close()
 
             self.assertIn(("D1", "100.1", "eyes"), slack.reactions)
-            self.assertIn(("D1", "100.1", "checking repository"), slack.messages)
+            self.assertIn(("D1", "100.1", "Innie is working"), slack.messages)
             self.assertIn(("D1", "900.1", "Usage: 20 input, 5 output, 50% cache hit."), slack.updates)
             self.assertNotIn(("D1", "900.1"), slack.deletes)
             self.assertIn(("D1", "900.1", "milestone 2 complete"), slack.updates)

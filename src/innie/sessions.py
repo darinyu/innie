@@ -17,6 +17,7 @@ class SessionRecord:
     output_target: str
     status: str
     harness_id: str | None
+    harness_resume_id: str | None
 
 
 def root_ts_for_trigger(trigger: SlackTrigger) -> str:
@@ -84,4 +85,17 @@ def get_session(db: sqlite3.Connection, session_id: str) -> SessionRecord:
         output_target=row["output_target"],
         status=row["status"],
         harness_id=row["harness_id"],
+        harness_resume_id=row["harness_resume_id"],
+    )
+
+
+def set_harness_resume_id(db: sqlite3.Connection, session_id: str, resume_id: str) -> None:
+    db.execute(
+        """
+        UPDATE sessions
+        SET harness_resume_id = ?,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?
+        """,
+        (resume_id, session_id),
     )

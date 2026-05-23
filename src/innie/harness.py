@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol
 
 HarnessEventType = Literal[
     "started",
+    "resume",
     "progress",
     "tool_use",
     "tool_result",
