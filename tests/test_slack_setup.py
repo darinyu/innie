@@ -47,6 +47,7 @@ class SlackSetupTest(unittest.TestCase):
         events = manifest["settings"]["event_subscriptions"]["bot_events"]
         self.assertEqual(["app_mention", "message.im"], events)
         self.assertTrue(manifest["settings"]["socket_mode_enabled"])
+        self.assertTrue(manifest["settings"]["interactivity"]["is_enabled"])
         scopes = manifest["oauth_config"]["scopes"]["bot"]
         self.assertIn("chat:write", scopes)
         self.assertIn("files:read", scopes)
@@ -83,6 +84,7 @@ class SlackSetupTest(unittest.TestCase):
 
             self.assertTrue(result.ok, result.messages)
             self.assertIn("Next:", "\n".join(result.messages))
+            self.assertIn("innie run --once --harness codex", "\n".join(result.messages))
             manifest = json.loads((workspace / ".innie" / "slack-manifest.json").read_text())
             self.assertEqual("innie", manifest["display_information"]["name"])
             config = (workspace / ".innie" / "config.yaml").read_text()

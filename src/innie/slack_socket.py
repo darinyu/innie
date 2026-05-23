@@ -20,13 +20,13 @@ class SlackSocketModeEventSource:
 
         async def _on_event(client, req) -> None:
             await client.send_socket_mode_response(self._response_factory(req.envelope_id))
-            if req.type == "events_api":
+            if req.type in {"events_api", "interactive"}:
                 received.append(req.payload)
 
         client = self._client_factory(self._app_token)
         client.socket_mode_request_listeners.append(_on_event)
-        await client.connect()
         try:
+            await client.connect()
             while not received:
                 # Real Slack SDK clients call listeners from their own receive loop.
                 # Tests use connect() to synchronously feed one request.

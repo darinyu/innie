@@ -1003,28 +1003,279 @@ Task 10: Milestone 1 acceptance test.
 
 ### Milestone 3: Concurrent Sessions And Recovery
 
-- Enforce one active harness turn per session.
-- Persist follow-up messages while a session is busy and drain them only at
-  safe points.
-- Support status and cancel interactions.
-- Cancel idle live session actors after `idle_session_ttl` and resume dormant
-  sessions on the next interaction.
-- Resume, mark interrupted, or request user action for in-flight tasks after
-  restart.
-- Store harness resume identifiers where the adapter exposes them.
-- Test idle eviction and dormant-session resume for the first adapter.
+Milestone 3 should use a producer/consumer queue model rather than treating
+`max_live_sessions` as the main capacity limit.
 
-### Milestone 4: Observability And Cleanup
+Task 1: Add Durable Worker And Lock State.
+
+Goal: Represent worker ownership, session leases, and recoverable in-flight work
+in SQLite before changing runtime behavior.
+
+- Add a runner `run_id` concept and worker ids such as `worker-1`.
+- Add durable session lease fields: `locked_by`, `locked_at`,
+  `lock_expires_at`.
+- Add enough inbox/task status values to distinguish `queued`, `processing`,
+  `done`, `failed`, `canceled`, and `interrupted`.
+- Keep locks as leases, not permanent booleans. A lock is active only when
+  `locked_by` is set and `lock_expires_at` is in the future.
+- Acceptance: schema migration is backward compatible and existing tests still
+  pass.
+
+Task 2: Split Slack Intake From Work Execution.
+
+Goal: Make Slack intake a producer that persists accepted requests and returns to
+listening without waiting for harness capacity.
+
+- Keep event acceptance, session resolution, trigger persistence, and inbox
+  enqueueing in the intake path.
+- Remove the assumption that a received Slack event must immediately drain that
+  session's inbox.
+- Wake the worker pool after enqueueing work, but keep the queued request durable
+  even if no worker is currently available.
+- Acceptance: `innie run` can accept multiple Slack events quickly while workers
+  are busy, and every accepted event appears in `session_inbox`.
+
+Task 3: Implement Global Fair Queue Claiming.
+
+Goal: Let workers claim the oldest eligible queued request without letting one
+busy session block unrelated sessions.
+
+- Add a global claim function that finds the oldest queued inbox row whose
+  session is not actively locked.
+- Atomically claim the inbox row and session lease in one short SQLite
+  transaction.
+- If the oldest queued row belongs to a locked session, skip it and claim the
+  next eligible row.
+- Never hold an open transaction while awaiting Codex, Slack, socket reads, or
+  any external call.
+- Acceptance: an old locked-session row does not block a newer unrelated queued
+  row.
+
+Task 4: Add The Async Worker Pool.
+
+Goal: Replace the per-session actor model with a fixed producer/consumer worker
+pool owned by `innie run`.
+
+- Run up to `max_workers` asyncio worker loops in the single `innie run`
+  process. Do not use Python threads or Python multiprocessing for this
+  milestone.
+- Use `max_workers` as the capacity limit for active harness work. Durable
+  sessions may outnumber live workers.
+- Keep worker loops alive while `innie run` is running. Idle workers should wait
+  on an in-process wake signal, sleep, or back off when no eligible work exists.
+- Start a harness subprocess only while a worker is actively running a claimed
+  task.
+- Acceptance: `max_workers=2` processes two different sessions concurrently and
+  `max_workers=1` drains queued work deterministically.
+
+Task 5: Preserve Per-Session Ordering.
+
+Goal: Ensure only one active harness turn can run for a session while unrelated
+sessions can continue.
+
+- A worker creates or resumes the target session only while processing its
+  claimed request.
+- Same-session follow-ups remain queued while the session lease is active.
+- After the harness turn finishes, fails, or is canceled, release the session
+  lease and let any worker claim the next eligible request.
+- Acceptance: same-session messages process sequentially, while different
+  sessions can run concurrently up to `max_workers`.
+
+Task 6: Add Lease Renewal And Startup Recovery.
+
+Goal: Prevent permanent SQLite locks after crashes and make interrupted work
+recoverable.
+
+- Renew `lock_expires_at` periodically while a worker is running a harness task.
+- On startup, clear stale leases from previous/dead runs before workers claim new
+  work.
+- Mark tasks left in `running` as `interrupted`.
+- Move inbox rows left in `processing` back to `queued` or mark them
+  `interrupted`, depending on whether the adapter can safely resume.
+- Store harness resume identifiers where the adapter exposes them.
+- Acceptance: killing `innie run` during active work does not permanently lock
+  the session, and the next run explains the recovery decision in logs.
+
+Task 7: Make Failures Graceful By Default.
+
+Goal: Keep `innie run` alive for unrelated work whenever an individual task,
+worker, harness, Slack call, or log write fails.
+
+- Wrap worker task execution so exceptions mark the affected task failed or
+  interrupted, release the session lease, and persist the error context.
+- Treat Slack progress/final delivery failures as non-fatal task events.
+- On shutdown signals or KeyboardInterrupt, stop accepting new events, let
+  in-flight workers finish when practical, interrupt remaining work after a
+  bounded grace period, release leases, and print a clear terminal summary.
+- Acceptance: a worker failure does not crash the whole runner when unrelated
+  work can continue, and graceful shutdown releases leases and leaves queued work
+  recoverable.
+
+Task 8: Add Worker Debug Logging.
+
+Goal: Make concurrency and recovery bugs debuggable from terminal output and
+`innie logs`.
+
+- Record structured worker lifecycle events: worker start/stop, idle, claim
+  attempt, claim success, skipped locked session, harness start, harness finish,
+  lock renewal, lock release, and startup recovery action.
+- Include `run_id`, `worker_id`, `session_id`, `inbox_id`, `task_id`,
+  `harness_id`, `lock_expires_at`, and status transition wherever applicable.
+- Persist worker/recovery events to SQLite in addition to terminal output so
+  `innie logs <session>` can explain what happened after terminal scrollback is
+  gone.
+- Acceptance: worker claim/release/recovery events are visible in `innie logs`.
+
+Task 9: Add Compact Worker Health Output.
+
+Goal: Give operators liveness and capacity feedback without noisy per-worker
+logs.
+
+- In `--verbose`, print only the compact worker heartbeat on startup,
+  claim/release, and about every 30 seconds:
+  `workers: total=7 idle=6 running=1 queued=4 locked_sessions=1`
+- Keep detailed worker lifecycle events in logs rather than flooding stdout.
+- Acceptance: verbose mode emits the compact heartbeat with accurate total,
+  idle, running, queued, and locked session counts.
+
+Task 10: Add Status And Cancel Semantics.
+
+Goal: Make user controls work consistently across queued, running, completed,
+and interrupted requests.
+
+- Support status inspection for queued, processing, running, completed, failed,
+  canceled, and interrupted work.
+- Support canceling queued requests before they are claimed.
+- Support canceling or interrupting running requests through the adapter when
+  possible, otherwise mark the request for cancellation and stop at the next safe
+  point.
+- Acceptance: status and cancel interactions report the correct state and do not
+  corrupt session ordering.
+
+Task 11: Run The Milestone 3 E2E Pass.
+
+Goal: Verify the producer/consumer runtime with Slack and the first adapter
+before adding more adapters.
+
+- Test `max_workers=2` with two different Slack sessions and confirm concurrent
+  harness work.
+- Test multiple messages in one Slack thread and confirm same-session ordering.
+- Test a locked old session plus a newer unrelated request and confirm the newer
+  request runs.
+- Test crash/restart recovery for stale leases and interrupted work.
+- Test Slack final/progress delivery failure handling without crashing the
+  runner.
+- Acceptance: the E2E pass demonstrates no permanent locks, no unrelated-session
+  starvation, graceful failure behavior, and enough logs to debug failures.
+
+### Milestone 4: Cleanup And Retention
+
+Milestone 4 should be a small, safe cleanup command. Keep v1 conservative:
+clean only old completed local state, dry run by default, and never touch active
+or recoverable work.
+
+Task 1: Define The V1 Cleanup Rule.
+
+Goal: Make the cleanup behavior simple enough to trust.
+
+- Files:
+  - Modify: `docs/initial-plan.md`
+  - Modify: `src/innie/cli.py`
+- V1 only considers completed tasks older than 30 days.
+- V1 deletes only local SQLite rows and artifact files under `.innie/`.
+- V1 does not delete Slack messages, harness workspace files, failed tasks,
+  interrupted tasks, queued work, running work, locked sessions, or run logs.
+- Acceptance: `innie cleanup --help` says dry run is default, `--apply` is
+  required to delete, and v1 only cleans completed tasks older than 30 days.
+
+Task 2: Add A Read-Only Cleanup Preview.
+
+Goal: Show what cleanup would remove without changing anything.
+
+- Files:
+  - Create: `src/innie/cleanup.py`
+  - Test: `tests/test_cleanup.py`
+- Find completed tasks with `completed_at` older than 30 days.
+- Include related `task_events` and artifacts for those tasks.
+- Include artifact files only if their paths are inside `.innie/`.
+- Return a small preview: task count, event count, artifact count, byte estimate,
+  and task ids.
+- Acceptance: preview finds old completed tasks and ignores recent, failed,
+  interrupted, queued, running, and locked work.
+
+Task 3: Add `innie cleanup` Dry Run.
+
+Goal: Let users run cleanup safely as a no-op first.
+
+- Files:
+  - Modify: `src/innie/cli.py`
+  - Modify: `src/innie/cleanup.py`
+  - Test: `tests/test_cli_cleanup.py`
+- Add `innie cleanup` command.
+- Dry run is the default.
+- Print the preview from Task 2.
+- Do not write to SQLite and do not delete files.
+- Acceptance: `innie cleanup` changes nothing and prints what `--apply` would
+  remove.
+
+Task 4: Add `innie cleanup --apply`.
+
+Goal: Delete only the exact local state shown by the preview.
+
+- Files:
+  - Modify: `src/innie/cleanup.py`
+  - Modify: `src/innie/cli.py`
+  - Test: `tests/test_cleanup.py`
+  - Test: `tests/test_cli_cleanup.py`
+- Require explicit `--apply`.
+- Recompute the preview immediately before deleting.
+- Delete eligible `.innie/` artifact files.
+- Delete related artifact rows, task events, and task rows.
+- Leave the session row in place for now, with no task history for the cleaned
+  task. Session deletion can be a later improvement.
+- Treat missing artifact files as already clean.
+- Acceptance: apply removes old completed task data and leaves active,
+  recoverable, recent, failed, and interrupted work untouched.
+
+Task 5: Show Cleanup Results In Logs.
+
+Goal: Make cleanup visible without adding a full observability system.
+
+- Files:
+  - Modify: `src/innie/cleanup.py`
+  - Modify: `src/innie/cli.py`
+  - Test: `tests/test_cli_inspection.py`
+- Record one `task_events` row per affected session when `--apply` deletes data:
+  `event_type='cleanup.applied'`.
+- Include the deleted task ids and counts in the payload.
+- `innie logs <session>` already prints task events, so no new UI surface is
+  needed.
+- Acceptance: after apply, `innie logs <session>` shows the cleanup event.
+
+Task 6: Run Cleanup E2E.
+
+Goal: Verify cleanup is safe on realistic local state.
+
+- Files:
+  - Test: `tests/test_milestone4_acceptance.py`
+- Create old completed, recent completed, failed, interrupted, queued, and
+  running tasks in a test workspace.
+- Run dry run and verify it reports only old completed task state.
+- Run apply and verify protected work remains intact.
+- Run `innie logs` after cleanup and verify the cleanup event is visible.
+- Acceptance: rerunning cleanup after apply reports no candidates, and active or
+  recoverable work is never deleted.
+
+### Milestone 5: Observability
 
 - Add structured task timelines and health checks.
 - Emit local metrics and trace-style events.
 - Add hook observability: hook duration, failures, skipped hooks, and required
   hook failures.
-- Add timestamped SQLite records and indexes for future cleanup.
-- Add a dry-run cleanup command for completed tasks and old artifacts.
 - Persist hook attempts and failures as observability events.
+- Add worker, queue, cleanup, schedule, Slack, and harness health summaries.
 
-### Milestone 5: Scheduled Work
+### Milestone 6: Scheduled Work
 
 - Add durable recurring tasks.
 - Start scheduled work through the same task lifecycle as Slack-triggered work.

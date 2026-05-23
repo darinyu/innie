@@ -5,7 +5,16 @@ import tempfile
 import unittest
 
 from innie.db import connect, initialize_schema
+from innie.pipeline import accept_slack_event
 from innie.slack_events import normalize_slack_event, persist_trigger
+
+
+class FakeSlack:
+    def __init__(self) -> None:
+        self.reactions: list[tuple[str, str, str]] = []
+
+    def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
+        self.reactions.append((channel, timestamp, name))
 
 
 class SlackEventIntakeTest(unittest.TestCase):
@@ -142,6 +151,45 @@ class SlackEventIntakeTest(unittest.TestCase):
 
         self.assertFalse(decision.accepted)
         self.assertEqual("not_for_innie", decision.reason)
+
+    def test_pipeline_rejects_duplicate_message_ts_with_new_event_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(Path(tmp) / "innie.db")
+            initialize_schema(db)
+            first_payload = {
+                "event_id": "EvOriginal",
+                "event": {
+                    "type": "message",
+                    "channel_type": "im",
+                    "channel": "D1",
+                    "user": "U1",
+                    "ts": "171.6",
+                    "text": "first delivery",
+                },
+            }
+            duplicate_payload = {
+                "event_id": "EvDuplicate",
+                "event": {
+                    "type": "message",
+                    "channel_type": "im",
+                    "channel": "D1",
+                    "user": "U1",
+                    "ts": "171.6",
+                    "text": "first delivery",
+                },
+            }
+            first = accept_slack_event(db, first_payload, bot_user_id="U_BOT", slack=FakeSlack())
+
+            accepted = accept_slack_event(db, duplicate_payload, bot_user_id="U_BOT", slack=FakeSlack())
+
+            self.assertFalse(accepted.decision.accepted)
+            self.assertEqual("duplicate_retry", accepted.decision.reason)
+            self.assertIsNone(accepted.inbox)
+            inbox_count = db.execute(
+                "SELECT COUNT(*) AS count FROM session_inbox WHERE session_id = ?",
+                (first.session.id,),
+            ).fetchone()["count"]
+            self.assertEqual(1, inbox_count)
 
 
 if __name__ == "__main__":

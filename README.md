@@ -80,16 +80,16 @@ For the guided Slack screenshots checklist, see
 ## Run
 
 Test the local route without Slack by feeding one Slack-shaped event file through
-the echo adapter:
+the diagnostic echo adapter:
 
 ```bash
 innie run --once --event-file event.json --harness echo
 ```
 
-After `innie slack setup`, test one real Slack-routed event and exit:
+After `innie slack setup`, test one real Slack-routed Codex event and exit:
 
 ```bash
-innie run --once --harness echo
+innie run --once --harness codex
 ```
 
 `--once` is a smoke-test mode: Innie connects, waits for one routed Slack event,
@@ -98,12 +98,13 @@ processes it, prints the session id and log command, then exits.
 Run continuously with:
 
 ```bash
-innie run --harness echo
+innie run
 ```
 
 Stop it with Ctrl-C.
 
-Use `--harness codex` after the echo path works.
+Use `--harness echo` when you want to debug Slack routing without starting
+Codex.
 
 ## Dependencies
 
