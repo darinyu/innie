@@ -48,14 +48,14 @@ class FailingFinalUpdateSlack(FakeSlackReplies):
 
 class FailingProgressPostSlack(FakeSlackReplies):
     def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
-        if text in {"working", "first", "second"}:
+        if text in {"Innie is working", "working", "first", "second"}:
             raise RuntimeError("chat.postMessage failed: rate_limited")
         return super().post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
 
 
 class FailingProgressUpdateSlack(FakeSlackReplies):
     def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
-        if text in {"working", "first", "second"}:
+        if text in {"Innie is working", "working", "first", "second"}:
             raise RuntimeError("chat.update failed: rate_limited")
         super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
 
@@ -455,7 +455,7 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(["idle", "idle"], statuses)
             self.assertEqual(2, events.count("harness.output"))
-            self.assertIn(("D1", "100.1", "working"), slack.messages)
+            self.assertIn(("D1", "100.1", "Innie is working"), slack.messages)
             self.assertIn(("D2", "900.2", "done"), slack.updates)
 
     def test_manager_updates_one_slack_progress_message_and_replaces_it_with_final_output(self) -> None:
@@ -508,7 +508,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual("plan", slack.update_blocks[0][0]["type"])
             self.assertEqual([], slack.deletes)
 
-    def test_manager_keeps_latest_progress_summary_above_tool_widget(self) -> None:
+    def test_manager_hides_thinking_progress_summary_above_tool_widget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -535,14 +535,9 @@ class RuntimeTest(unittest.TestCase):
             finally:
                 manager.close()
 
-            self.assertEqual("section", slack.update_blocks[0][0]["type"])
-            self.assertEqual("innie-progress-summary", slack.update_blocks[0][0]["block_id"])
-            self.assertEqual(
-                "I will check recent primary sources first.",
-                slack.update_blocks[0][0]["text"]["text"],
-            )
-            self.assertEqual("plan", slack.update_blocks[0][1]["type"])
-            self.assertEqual("Innie is searching the web", slack.update_blocks[0][1]["title"])
+            self.assertEqual("plan", slack.update_blocks[0][0]["type"])
+            self.assertEqual("Innie is searching the web", slack.update_blocks[0][0]["title"])
+            self.assertNotIn("I will check recent primary sources first.", str(slack.update_blocks[0]))
 
     def test_manager_deletes_progress_message_and_posts_fallback_when_final_update_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -585,7 +580,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(("D1", "100.1"), fallback_messages[0][:2])
             self.assertTrue(fallback_messages[0][2].startswith("final answer"))
             self.assertTrue(all(len(message[2]) <= SLACK_FINAL_TEXT_LIMIT for message in fallback_messages))
-            self.assertEqual("context", slack.message_blocks[1][0]["type"])
+            self.assertEqual("section", slack.message_blocks[1][0]["type"])
             self.assertNotIn("Progress details", str(slack.message_blocks[2]))
             self.assertIn(
                 f"session {session.id} task ",
@@ -701,7 +696,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn("adapter crashed", slack.updates[-1][2])
             self.assertIn("failed: adapter crashed", "\n".join(terminal))
 
-    def test_manager_splits_long_final_output_and_only_first_message_has_progress_details(self) -> None:
+    def test_manager_splits_long_final_output_without_progress_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -731,11 +726,12 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(("D1", "900.1", first_line), slack.updates[-1])
             self.assertEqual(("D1", "100.1", second_line), slack.messages[-1])
-            self.assertEqual("context", slack.update_blocks[-1][0]["type"])
+            self.assertEqual("section", slack.update_blocks[-1][0]["type"])
             self.assertEqual("section", slack.message_blocks[-1][0]["type"])
+            self.assertNotIn("Progress details", str(slack.update_blocks[-1]))
             self.assertNotIn("Progress details", str(slack.message_blocks[-1]))
 
-    def test_manager_posts_final_output_with_collapsed_progress_details(self) -> None:
+    def test_manager_posts_final_output_without_progress_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -765,10 +761,10 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(("D1", "900.1", "final answer"), slack.updates[-1])
             final_blocks = slack.update_blocks[-1]
             self.assertIsNotNone(final_blocks)
-            self.assertEqual("context", final_blocks[0]["type"])
-            self.assertEqual("actions", final_blocks[1]["type"])
-            self.assertEqual("show more", final_blocks[1]["elements"][0]["text"]["text"])
-            self.assertEqual("final answer", final_blocks[3]["text"]["text"])
+            self.assertEqual("section", final_blocks[0]["type"])
+            self.assertEqual("final answer", final_blocks[0]["text"]["text"])
+            self.assertNotIn("Progress details", str(final_blocks))
+            self.assertNotIn("show more", str(final_blocks))
 
     def test_manager_posts_progress_widget_to_root_thread_for_channel_and_threaded_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

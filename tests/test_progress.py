@@ -12,7 +12,7 @@ class SlackProgressRendererTest(unittest.TestCase):
 
         self.assertIsNone(renderer.render("task_1", HarnessEvent(type="started")))
         self.assertEqual(
-            "running tests",
+            "Innie is working",
             renderer.render("task_1", HarnessEvent(type="progress", message="running tests")),
         )
         self.assertEqual(
@@ -76,7 +76,7 @@ class SlackProgressRendererTest(unittest.TestCase):
             widget.blocks,
         )
 
-    def test_renders_progress_text_above_block_kit_progress_widget(self) -> None:
+    def test_hides_progress_text_inside_thinking_widget(self) -> None:
         renderer = SlackProgressRenderer()
 
         widget = renderer.render_widget(
@@ -85,14 +85,9 @@ class SlackProgressRendererTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(widget)
-        self.assertEqual("I will check recent primary sources first.", widget.text)
+        self.assertEqual("Innie is working", widget.text)
         self.assertEqual(
             [
-                {
-                    "type": "section",
-                    "block_id": "innie-progress-summary",
-                    "text": {"type": "mrkdwn", "text": "I will check recent primary sources first."},
-                },
                 {
                     "type": "plan",
                     "block_id": "innie-progress-plan",
@@ -100,7 +95,7 @@ class SlackProgressRendererTest(unittest.TestCase):
                     "tasks": [
                         {
                             "task_id": "latest",
-                            "title": "I will check recent primary sources first.",
+                            "title": "Working",
                             "status": "in_progress",
                         }
                     ],
@@ -129,19 +124,16 @@ class SlackProgressRendererTest(unittest.TestCase):
 
         self.assertIsNone(renderer.render("task_1", HarnessEvent(type="tool_result", payload={"private": "raw"})))
 
-    def test_final_progress_details_only_store_progress_events(self) -> None:
+    def test_thinking_progress_is_not_saved_as_final_detail(self) -> None:
         renderer = SlackProgressRenderer()
 
-        self.assertEqual(
-            "checking context",
-            renderer.detail_line(HarnessEvent(type="progress", message="checking context")),
-        )
+        self.assertIsNone(renderer.detail_line(HarnessEvent(type="progress", message="checking context")))
         self.assertIsNone(
             renderer.detail_line(HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}))
         )
         self.assertIsNone(renderer.detail_line(HarnessEvent(type="usage", usage=TokenUsage(input_tokens=10))))
 
-    def test_renders_final_output_with_collapsed_progress_details(self) -> None:
+    def test_renders_final_output_without_progress_details(self) -> None:
         renderer = SlackProgressRenderer()
 
         widget = renderer.render_final_widget(
@@ -157,24 +149,6 @@ class SlackProgressRendererTest(unittest.TestCase):
         self.assertEqual("*Final*\nDone.", widget.text)
         self.assertEqual(
             [
-                {
-                    "type": "context",
-                    "block_id": "innie-progress-details-context",
-                    "elements": [{"type": "mrkdwn", "text": "Progress details"}],
-                },
-                {
-                    "type": "actions",
-                    "block_id": "innie-progress-details-actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "action_id": "innie_show_progress_details",
-                            "text": {"type": "plain_text", "text": "show more"},
-                            "value": "task_1",
-                        }
-                    ],
-                },
-                {"type": "divider", "block_id": "innie-final-divider"},
                 {
                     "type": "section",
                     "block_id": "innie-final-output",
@@ -264,9 +238,10 @@ class SlackProgressRendererTest(unittest.TestCase):
         self.assertEqual(2, len(messages))
         self.assertEqual(first_line, messages[0].text)
         self.assertEqual(second_line, messages[1].text)
-        self.assertEqual("context", messages[0].blocks[0]["type"])
+        self.assertEqual("section", messages[0].blocks[0]["type"])
         self.assertEqual("section", messages[1].blocks[0]["type"])
         self.assertEqual("innie-final-output", messages[1].blocks[0]["block_id"])
+        self.assertNotIn("Progress details", str(messages[0].blocks))
         self.assertNotIn("Progress details", str(messages[1].blocks))
 
 

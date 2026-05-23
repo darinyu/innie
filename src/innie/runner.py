@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from .adapters import CodexCliAdapter, EchoAdapter
+from .adapters import ClaudeCliAdapter, CodexCliAdapter, EchoAdapter
 from .config import innie_dir, load_secrets, read_workspace_config
 from .db import connect, initialize_schema
 from .harness import HarnessAdapter, HarnessEvent
@@ -51,6 +51,7 @@ class ConsoleSlackClient:
 
 def adapter_map(*, verbose: bool = False, output: OutputFn | None = None) -> dict[str, HarnessAdapter]:
     return {
+        "claude": ClaudeCliAdapter(verbose=verbose, output=output),
         "codex": CodexCliAdapter(verbose=verbose, output=output),
         "echo": EchoAdapter(),
     }
@@ -182,19 +183,32 @@ async def _run_forever_socket_async(
     verbose: bool,
     max_workers: int,
 ) -> int:
+    workspace = workspace.resolve()
+    config = read_workspace_config(workspace)
+    secrets = load_secrets(workspace)
+    selected_harness = harness_id or config.harness_selected or "codex"
+    selected_bot_user_id = bot_user_id or config.bot_user_id
+    if not selected_bot_user_id:
+        raise RuntimeError("Slack bot user id is missing. Run `innie slack setup` or pass --bot-user-id.")
+    selected_watched_user_id = watched_user_id if watched_user_id is not None else config.watched_user_id
+    selected_slack = slack or SlackWebClient(secrets["slack_bot_token"])
+    selected_source = event_source or SlackSocketModeEventSource(secrets["slack_app_token"])
+
     accepted_count = 0
     seen_count = 0
     drain_task: asyncio.Task | None = None
+    payloads = _receive_socket_payloads(selected_source)
     while True:
         try:
             output(f"waiting for Slack event #{seen_count + 1}")
-            result = await _run_once_socket_async(
+            payload = await payloads.__anext__()
+            result = await process_payload(
                 workspace,
-                harness_id=harness_id,
-                bot_user_id=bot_user_id,
-                watched_user_id=watched_user_id,
-                slack=slack,
-                event_source=event_source,
+                payload,
+                harness_id=selected_harness,
+                bot_user_id=selected_bot_user_id,
+                watched_user_id=selected_watched_user_id,
+                slack=selected_slack,
                 adapters=adapters,
                 verbose=verbose,
                 output=output,
@@ -203,6 +217,14 @@ async def _run_forever_socket_async(
                 drain=False,
             )
         except KeyboardInterrupt:
+            if drain_task is not None:
+                try:
+                    await drain_task
+                except Exception as exc:
+                    output(f"worker drain failed during shutdown: {exc}")
+            output(f"stopped after {accepted_count} accepted event(s)")
+            return accepted_count
+        except StopAsyncIteration:
             if drain_task is not None:
                 try:
                     await drain_task
@@ -223,7 +245,7 @@ async def _run_forever_socket_async(
                 drain_task = asyncio.create_task(
                     _drain_workspace(
                         workspace,
-                        slack=result.resolved_slack or slack,
+                        slack=result.resolved_slack or selected_slack,
                         adapters=adapters,
                         verbose=verbose,
                         output=output,
@@ -232,6 +254,16 @@ async def _run_forever_socket_async(
                 )
         else:
             output(f"ignored event: {result.reason} {describe_slack_payload(result.payload)}".rstrip())
+
+
+async def _receive_socket_payloads(event_source):
+    receive_forever = getattr(event_source, "receive_forever", None)
+    if receive_forever is not None:
+        async for payload in receive_forever():
+            yield payload
+        return
+    while True:
+        yield await event_source.receive_once()
 
 
 async def _run_once_socket_async(

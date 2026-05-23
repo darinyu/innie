@@ -90,6 +90,20 @@ class CliRunTest(unittest.TestCase):
             self.assertIn("Innie run starting: harness=codex", stdout.getvalue())
             self.assertEqual("codex", run.call_args.kwargs["harness_id"])
 
+    def test_run_once_accepts_claude_as_opt_in_harness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = StringIO()
+            with mock.patch(
+                "innie.cli.run_once_socket",
+                return_value=RunOnceResult(True, "accepted", "sess_1", session_status="new", harness_id="claude"),
+            ) as run:
+                with redirect_stdout(stdout):
+                    code = main(["--workspace", tmp, "run", "--once", "--harness", "claude"])
+
+            self.assertEqual(0, code)
+            self.assertIn("Innie run starting: harness=claude", stdout.getvalue())
+            self.assertEqual("claude", run.call_args.kwargs["harness_id"])
+
     def test_run_without_once_uses_continuous_socket_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout = StringIO()
@@ -109,8 +123,13 @@ class CliRunTest(unittest.TestCase):
                 with mock.patch("builtins.print") as print_mock:
                     self.assertEqual(0, main(["--workspace", tmp, "run", "--once", "--harness", "echo"]))
 
-            self.assertIn(mock.call("Innie run starting: harness=echo once=True continuous=False", flush=True), print_mock.mock_calls)
-            self.assertIn(mock.call("Socket Mode enabled; waiting for one accepted Slack event...", flush=True), print_mock.mock_calls)
+            printed = [call.args[0] for call in print_mock.mock_calls]
+            self.assertTrue(
+                any(line.endswith(" Innie run starting: harness=echo once=True continuous=False") for line in printed)
+            )
+            self.assertTrue(
+                any(line.endswith(" Socket Mode enabled; waiting for one accepted Slack event...") for line in printed)
+            )
 
     def test_run_verbose_uses_rich_console_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,7 +138,10 @@ class CliRunTest(unittest.TestCase):
                 with mock.patch("innie.cli.Console", return_value=console):
                     self.assertEqual(0, main(["--workspace", tmp, "run", "--once", "--verbose", "--harness", "echo"]))
 
-            console.print.assert_any_call("Innie run starting: harness=echo once=True continuous=False", highlight=False)
+            printed = [call.args[0] for call in console.print.mock_calls]
+            self.assertTrue(
+                any(line.endswith(" Innie run starting: harness=echo once=True continuous=False") for line in printed)
+            )
 
 
 if __name__ == "__main__":

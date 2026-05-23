@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run Innie against Slack or one Slack-shaped event")
     run_parser.add_argument("--once", action="store_true", help="Process one event and exit")
     run_parser.add_argument("--event-file", type=Path, default=None, help="Slack event payload JSON file")
-    run_parser.add_argument("--harness", choices=("echo", "codex"), default="codex", help="Harness adapter to use")
+    run_parser.add_argument("--harness", choices=("echo", "codex", "claude"), default="codex", help="Harness adapter to use")
     run_parser.add_argument("--max-workers", type=int, default=7, help="Maximum concurrent harness workers")
     run_parser.add_argument("--bot-user-id", default="U_BOT", help="Bot user id for local event-file runs")
     run_parser.add_argument("--watched-user-id", default=None, help="Optional watched user id for mention mode")

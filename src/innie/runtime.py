@@ -236,6 +236,7 @@ class SessionActor:
             )
             async for event in adapter.stream_events(task.id):
                 if event.type == "started":
+                    self._record_harness_resume_id(event)
                     continue
                 if event.type == "resume":
                     self._record_harness_resume_id(event)
