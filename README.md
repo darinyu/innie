@@ -2,7 +2,7 @@
 
 ![Innie wordmark](assets/logo/innie-wordmark.svg)
 
-**Every worker deserves an innie: an AI work-self you can trigger from Slack.**
+**Every worker deserves an innie: an AI work-self you can trigger from Slack, any where, any time.**
 
 > Innie is an early prototype. The repo contains the first local setup,
 > Slack setup, durable state, hooks, session inspection, Codex and echo adapter
@@ -16,6 +16,9 @@ Innie is the thinnest customizable layer between Slack and agent harnesses like
 Codex, Claude Code, OpenCode, Goose, and future tools. You run Innie in your own
 dev environment, local or cloud. It keeps work durable, visible, resumable, and
 observable while the selected harness does the actual agent work.
+
+The human is the **Outie**: the person who asks from Slack, follows progress,
+and receives the result.
 
 The bet is simple: **harnesses keep getting better**. Innie should not replace
 their planning, coding, permissions, tools, or model behavior. Innie owns the
@@ -33,39 +36,6 @@ operating envelope around them:
 Innie is not a new agent loop, policy engine, model runtime, or semantic memory
 system. It is the minimum product shell that can make a harness feel like a
 dependable worker.
-
-## Project Status
-
-This project is in prototype development. Expect APIs, CLI commands, storage
-shape, and adapter contracts to change.
-
-### Works Today
-
-- `innie init` creates local Innie state and can launch Slack setup.
-- `innie slack setup` guides Slack app manifest, OAuth, and Socket Mode setup.
-- `innie run` can process one routed event or run continuously.
-- Local durable state is stored under `.innie/`.
-- Slack-triggered messages can be accepted, attached to durable sessions, and
-  queued for session work.
-- Codex is the first harness path.
-- Echo is available as a diagnostic adapter for local routing tests.
-- Session status, logs, cancel, inbox, runtime, progress, and lifecycle hook
-  primitives exist in the codebase.
-- Unit and acceptance tests cover the current prototype behavior.
-
-### In Progress
-
-- Hardening the Codex harness path from prototype behavior into a stable
-  adapter contract.
-- Stronger recovery behavior across process restarts.
-- Observability output that is useful to both the operator and the Slack user.
-
-### Not Yet
-
-- Production deployment guidance.
-- Stable adapter API.
-- Multi-user or multi-tenant routing.
-- Built-in long-term memory or deep tool policy.
 
 ## How It Works
 
