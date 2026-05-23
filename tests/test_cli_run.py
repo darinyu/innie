@@ -125,10 +125,10 @@ class CliRunTest(unittest.TestCase):
 
             printed = [call.args[0] for call in print_mock.mock_calls]
             self.assertTrue(
-                any(line == "Innie run starting: harness=echo once=True continuous=False" for line in printed)
+                any(line.endswith(" Innie run starting: harness=echo once=True continuous=False") for line in printed)
             )
             self.assertTrue(
-                any(line == "Socket Mode enabled; waiting for one accepted Slack event..." for line in printed)
+                any(line.endswith(" Socket Mode enabled; waiting for one accepted Slack event...") for line in printed)
             )
 
     def test_run_verbose_uses_rich_console_when_available(self) -> None:
@@ -140,7 +140,7 @@ class CliRunTest(unittest.TestCase):
 
             printed = [call.args[0] for call in console.print.mock_calls]
             self.assertTrue(
-                any(line == "Innie run starting: harness=echo once=True continuous=False" for line in printed)
+                any(line.endswith(" Innie run starting: harness=echo once=True continuous=False") for line in printed)
             )
 
 
