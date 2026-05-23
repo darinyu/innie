@@ -20,7 +20,7 @@ class SlackSocketModeEventSource:
 
         async def _on_event(client, req) -> None:
             await client.send_socket_mode_response(self._response_factory(req.envelope_id))
-            if req.type == "events_api":
+            if req.type in {"events_api", "interactive"}:
                 received.append(req.payload)
 
         client = self._client_factory(self._app_token)

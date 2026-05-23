@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 
+from innie.harness import HarnessEvent, ScriptedHarnessAdapter
+from innie.progress import SLACK_FINAL_TEXT_LIMIT, SLACK_TEXT_LIMIT
 from innie.runner import ConsoleSlackClient, format_run_acceptance, run_forever_socket, run_once_payload, run_once_socket
 
 
@@ -78,6 +81,194 @@ class RunnerTest(unittest.TestCase):
 
             self.assertFalse(result.accepted)
             self.assertEqual("not_for_innie", result.reason)
+
+    def test_run_once_payload_expands_progress_details_interaction(self) -> None:
+        class RecordingSlack(ConsoleSlackClient):
+            def __init__(self) -> None:
+                super().__init__(output=lambda _line: None)
+                self.updates: list[tuple[str, str, str, list[dict] | None]] = []
+
+            def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+                self.updates.append((channel, ts, text, blocks))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            slack = RecordingSlack()
+            result = run_once_payload(
+                workspace,
+                payload(),
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=slack,
+                adapters={
+                    "scripted": ScriptedHarnessAdapter(
+                        events=[
+                            HarnessEvent(type="progress", message="checking context"),
+                            HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}),
+                            HarnessEvent(type="usage"),
+                            HarnessEvent(type="output", message="final answer"),
+                            HarnessEvent(type="completed"),
+                        ]
+                    )
+                },
+            )
+            db_path = workspace / ".innie" / "innie.db"
+            db = sqlite3.connect(db_path)
+            try:
+                task_id = db.execute("SELECT id FROM tasks").fetchone()[0]
+            finally:
+                db.close()
+            slack.updates.clear()
+
+            interaction = {
+                "type": "block_actions",
+                "channel": {"id": "D1"},
+                "message": {"ts": "900.1", "text": "final answer"},
+                "actions": [{"action_id": "innie_show_progress_details", "value": task_id}],
+            }
+
+            interaction_result = run_once_payload(
+                workspace,
+                interaction,
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=slack,
+                adapters={"scripted": ScriptedHarnessAdapter(events=[])},
+            )
+
+            self.assertTrue(interaction_result.accepted)
+            self.assertEqual("progress_details", interaction_result.reason)
+            self.assertEqual(("D1", "900.1", "final answer"), slack.updates[-1][:3])
+            blocks = slack.updates[-1][3]
+            self.assertIsNotNone(blocks)
+            self.assertEqual("section", blocks[1]["type"])
+            self.assertEqual("checking context", blocks[1]["text"]["text"])
+            self.assertEqual("actions", blocks[2]["type"])
+            self.assertEqual("innie_hide_progress_details", blocks[2]["elements"][0]["action_id"])
+            self.assertNotIn("web search", blocks[1]["text"]["text"])
+
+            interaction["actions"] = [{"action_id": "innie_hide_progress_details", "value": task_id}]
+            run_once_payload(
+                workspace,
+                interaction,
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=slack,
+                adapters={"scripted": ScriptedHarnessAdapter(events=[])},
+            )
+
+            folded_blocks = slack.updates[-1][3]
+            self.assertIsNotNone(folded_blocks)
+            self.assertEqual("actions", folded_blocks[1]["type"])
+            self.assertEqual("innie_show_progress_details", folded_blocks[1]["elements"][0]["action_id"])
+            self.assertNotIn("innie-progress-details", [block.get("block_id") for block in folded_blocks])
+
+    def test_progress_details_interaction_does_not_resend_huge_slack_message_text(self) -> None:
+        class SizeGuardSlack(ConsoleSlackClient):
+            def __init__(self) -> None:
+                super().__init__(output=lambda _line: None)
+                self.updates: list[tuple[str, str, str, list[dict] | None]] = []
+
+            def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+                if len(text) > SLACK_FINAL_TEXT_LIMIT:
+                    raise RuntimeError("chat.update failed: msg_too_long")
+                self.updates.append((channel, ts, text, blocks))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            slack = SizeGuardSlack()
+            first_line = "a" * (SLACK_TEXT_LIMIT - 5)
+            second_line = "second slack message"
+            result = run_once_payload(
+                workspace,
+                payload(),
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=slack,
+                adapters={
+                    "scripted": ScriptedHarnessAdapter(
+                        events=[
+                            HarnessEvent(type="progress", message="checking context"),
+                            HarnessEvent(type="output", message=f"{first_line}\n{second_line}"),
+                            HarnessEvent(type="completed"),
+                        ]
+                    )
+                },
+            )
+            db_path = workspace / ".innie" / "innie.db"
+            db = sqlite3.connect(db_path)
+            try:
+                task_id = db.execute("SELECT id FROM tasks").fetchone()[0]
+            finally:
+                db.close()
+            slack.updates.clear()
+
+            interaction = {
+                "type": "block_actions",
+                "channel": {"id": "D1"},
+                "message": {"ts": "900.1", "text": "x" * (SLACK_TEXT_LIMIT + 1000)},
+                "actions": [{"action_id": "innie_show_progress_details", "value": task_id}],
+            }
+
+            interaction_result = run_once_payload(
+                workspace,
+                interaction,
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=slack,
+                adapters={"scripted": ScriptedHarnessAdapter(events=[])},
+            )
+
+            self.assertTrue(result.accepted)
+            self.assertTrue(interaction_result.accepted)
+            self.assertEqual("progress_details", interaction_result.reason)
+            self.assertEqual(("D1", "900.1", first_line[:SLACK_FINAL_TEXT_LIMIT]), slack.updates[-1][:3])
+
+    def test_progress_details_interaction_swallow_slack_update_failure(self) -> None:
+        class FailingSlack(ConsoleSlackClient):
+            def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+                raise RuntimeError("chat.update failed: msg_too_long")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            run_once_payload(
+                workspace,
+                payload(),
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=FailingSlack(output=lambda _line: None),
+                adapters={
+                    "scripted": ScriptedHarnessAdapter(
+                        events=[
+                            HarnessEvent(type="progress", message="checking context"),
+                            HarnessEvent(type="output", message="final answer"),
+                            HarnessEvent(type="completed"),
+                        ]
+                    )
+                },
+            )
+            db = sqlite3.connect(workspace / ".innie" / "innie.db")
+            try:
+                task_id = db.execute("SELECT id FROM tasks").fetchone()[0]
+            finally:
+                db.close()
+
+            interaction_result = run_once_payload(
+                workspace,
+                {
+                    "type": "block_actions",
+                    "channel": {"id": "D1"},
+                    "message": {"ts": "900.1", "text": "final answer"},
+                    "actions": [{"action_id": "innie_show_progress_details", "value": task_id}],
+                },
+                harness_id="scripted",
+                bot_user_id="U_BOT",
+                slack=FailingSlack(output=lambda _line: None),
+                adapters={"scripted": ScriptedHarnessAdapter(events=[])},
+            )
+
+            self.assertTrue(interaction_result.accepted)
+            self.assertEqual("progress_details", interaction_result.reason)
 
     def test_cli_event_file_is_supported_by_runner_payload_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

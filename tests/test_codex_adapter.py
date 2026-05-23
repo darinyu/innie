@@ -231,6 +231,65 @@ class CodexCliAdapterTest(unittest.TestCase):
 
         self.assertIn(("output", "hello from agent item"), events)
 
+    def test_buffers_intermediate_agent_messages_as_progress_and_outputs_only_last_message(self) -> None:
+        process = FakeProcess(
+            [
+                {"type": "agent_message", "message": "I am checking the repo first."},
+                {
+                    "type": "item.started",
+                    "item": {
+                        "type": "web_search_call",
+                        "query": "innie slack progress widget",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": "I found the relevant code path.",
+                    },
+                },
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 11,
+                        "output_tokens": 7,
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[tuple[str, str | None]]:
+            handle = await adapter.start_task(request)
+            return [(event.type, event.message) async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual(
+            [
+                ("progress", "I am checking the repo first."),
+                ("tool_use", "innie slack progress widget"),
+                ("usage", None),
+                ("output", "I found the relevant code path."),
+                ("completed", "Codex completed."),
+            ],
+            events,
+        )
+
     def test_maps_codex_web_search_item_to_tool_widget_event(self) -> None:
         process = FakeProcess(
             [
@@ -389,6 +448,44 @@ class CodexCliAdapterTest(unittest.TestCase):
         self.assertEqual(11, events[0].usage.input_tokens)
         self.assertEqual(7, events[0].usage.output_tokens)
         self.assertEqual(5, events[0].usage.cache_read_tokens)
+
+    def test_maps_codex_cached_input_tokens_to_cache_read_tokens(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 7,
+                        "cached_input_tokens": 42,
+                    },
+                },
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[HarnessEvent]:
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("usage", events[0].type)
+        self.assertEqual(42, events[0].usage.cache_read_tokens)
+        self.assertEqual(0.42, events[0].usage.cache_hit_rate)
 
     def test_verbose_logs_unknown_codex_event_without_streaming_private_reasoning(self) -> None:
         process = FakeProcess(

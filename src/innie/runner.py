@@ -4,13 +4,14 @@ from dataclasses import dataclass
 import asyncio
 import json
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .adapters import CodexCliAdapter, EchoAdapter
 from .config import innie_dir, load_secrets, read_workspace_config
 from .db import connect, initialize_schema
-from .harness import HarnessAdapter
+from .harness import HarnessAdapter, HarnessEvent
 from .pipeline import accept_slack_event
+from .progress import HIDE_PROGRESS_ACTION_ID, SHOW_PROGRESS_ACTION_ID, SLACK_FINAL_TEXT_LIMIT, SlackProgressRenderer
 from .runtime import SessionManager
 from .slack_client import SlackWebClient
 from .slack_socket import SlackSocketModeEventSource
@@ -36,11 +37,11 @@ class ConsoleSlackClient:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self._output(f"reaction {channel} {timestamp} {name}")
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str:
+    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None) -> str:
         self._output(f"message {channel} {thread_ts} {text}")
         return thread_ts
 
-    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
         self._output(f"update {channel} {ts} {text}")
 
     def delete_message(self, *, channel: str, ts: str) -> None:
@@ -286,6 +287,10 @@ async def process_payload(
     db = connect(db_path)
     initialize_schema(db)
     try:
+        if _is_progress_details_interaction(payload):
+            _handle_progress_details_interaction(db, payload, slack)
+            db.commit()
+            return RunOnceResult(True, "progress_details", payload=payload)
         existing_session_id = _existing_session_id_for_payload(db, payload)
         accepted = accept_slack_event(
             db,
@@ -327,6 +332,8 @@ async def process_payload(
 
 
 def format_run_acceptance(result: RunOnceResult) -> str:
+    if result.accepted and result.session_id is None:
+        return f"handled {result.reason}"
     line = f"accepted {result.session_status or 'unknown'} session {result.session_id}"
     if result.harness_id:
         line = f"{line} via {result.harness_id}"
@@ -350,6 +357,127 @@ def _existing_session_id_for_payload(db, payload: dict) -> str | None:
         (str(channel_id), str(thread_ts)),
     ).fetchone()
     return None if row is None else row["id"]
+
+
+def _is_progress_details_interaction(payload: dict) -> bool:
+    if payload.get("type") != "block_actions":
+        return False
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        return False
+    return any(
+        isinstance(action, dict) and action.get("action_id") in {SHOW_PROGRESS_ACTION_ID, HIDE_PROGRESS_ACTION_ID}
+        for action in actions
+    )
+
+
+def _handle_progress_details_interaction(db, payload: dict, slack) -> None:
+    action = _progress_details_action(payload)
+    if action is None:
+        return
+    task_id = str(action.get("value") or "")
+    if not task_id:
+        return
+    channel = payload.get("channel") if isinstance(payload.get("channel"), dict) else {}
+    message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+    channel_id = str(channel.get("id") or "")
+    message_ts = str(message.get("ts") or "")
+    if not channel_id or not message_ts:
+        return
+    renderer = SlackProgressRenderer()
+    details = _progress_details_for_task(db, renderer, task_id)
+    final_text = _first_final_text_for_task(db, renderer, task_id, details)
+    if final_text is None:
+        final_text = _fallback_interaction_message_text(message)
+    if action.get("action_id") == HIDE_PROGRESS_ACTION_ID:
+        rendered = renderer.render_collapsed_final_widget(task_id, final_text, details)
+    else:
+        rendered = renderer.render_expanded_final_widget(task_id, final_text, details)
+    try:
+        slack.update_message(channel=channel_id, ts=message_ts, text=rendered.text, blocks=rendered.blocks)
+    except Exception:
+        return
+
+
+def _progress_details_action(payload: dict) -> dict | None:
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        return None
+    for action in actions:
+        if isinstance(action, dict) and action.get("action_id") in {SHOW_PROGRESS_ACTION_ID, HIDE_PROGRESS_ACTION_ID}:
+            return action
+    return None
+
+
+def _progress_details_for_task(db, renderer: SlackProgressRenderer, task_id: str) -> list[str]:
+    rows = db.execute(
+        """
+        SELECT payload_json
+        FROM task_events
+        WHERE task_id = ? AND event_type = 'harness.progress'
+        ORDER BY id ASC
+        """,
+        (task_id,),
+    ).fetchall()
+    details: list[str] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        message = payload.get("message")
+        if not message:
+            continue
+        detail = renderer.detail_line(HarnessEvent(type="progress", message=str(message)))
+        if detail is not None:
+            details.append(detail)
+    return details
+
+
+def _first_final_text_for_task(
+    db,
+    renderer: SlackProgressRenderer,
+    task_id: str,
+    progress_details: list[str],
+) -> str | None:
+    row = db.execute(
+        """
+        SELECT event_type, payload_json
+        FROM task_events
+        WHERE task_id = ?
+          AND event_type IN ('harness.output', 'harness.failed', 'harness.canceled')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row["payload_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    event_type = str(payload.get("type") or str(row["event_type"]).removeprefix("harness."))
+    message = payload.get("message")
+    event = HarnessEvent(
+        type=event_type,
+        message=None if message is None else str(message),
+        payload=payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
+    )
+    messages = renderer.render_final_messages(task_id, event, progress_details)
+    if not messages:
+        return None
+    return messages[0].text
+
+
+def _fallback_interaction_message_text(message: dict, *, limit: int = SLACK_FINAL_TEXT_LIMIT) -> str:
+    text = str(message.get("text") or "")
+    if len(text) <= limit:
+        return text
+    split_at = text.rfind("\n", 0, limit + 1)
+    if split_at <= 0:
+        split_at = limit
+    return text[:split_at]
 
 
 def describe_slack_payload(payload: dict) -> str:

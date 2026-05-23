@@ -114,7 +114,7 @@ def build_manifest(
             "event_subscriptions": {
                 "bot_events": events,
             },
-            "interactivity": {"is_enabled": False},
+            "interactivity": {"is_enabled": True},
             "org_deploy_enabled": False,
             "socket_mode_enabled": True,
             "token_rotation_enabled": False,

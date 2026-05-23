@@ -2,14 +2,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sqlite3
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class SlackReplyClient(Protocol):
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str | None:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> str | None:
         ...
 
-    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+    def update_message(
+        self,
+        *,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> None:
         ...
 
     def delete_message(self, *, channel: str, ts: str) -> None:

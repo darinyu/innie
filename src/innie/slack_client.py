@@ -16,12 +16,32 @@ class SlackWebClient:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self._post_json("reactions.add", {"channel": channel, "timestamp": timestamp, "name": name})
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str | None:
-        result = self._post_json("chat.postMessage", {"channel": channel, "thread_ts": thread_ts, "text": text})
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        payload: dict[str, Any] = {"channel": channel, "thread_ts": thread_ts, "text": text}
+        if blocks is not None:
+            payload["blocks"] = blocks
+        result = self._post_json("chat.postMessage", payload)
         return result.get("ts")
 
-    def update_message(self, *, channel: str, ts: str, text: str) -> None:
-        self._post_json("chat.update", {"channel": channel, "ts": ts, "text": text})
+    def update_message(
+        self,
+        *,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"channel": channel, "ts": ts, "text": text}
+        if blocks is not None:
+            payload["blocks"] = blocks
+        self._post_json("chat.update", payload)
 
     def delete_message(self, *, channel: str, ts: str) -> None:
         self._post_json("chat.delete", {"channel": channel, "ts": ts})

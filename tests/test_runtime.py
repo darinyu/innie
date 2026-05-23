@@ -6,11 +6,12 @@ import tempfile
 import unittest
 
 from innie.db import connect, initialize_schema
-from innie.harness import HarnessEvent, ScriptedHarnessAdapter
+from innie.harness import HarnessCapabilities, HarnessEvent, ScriptedHarnessAdapter, TaskHandle
 from innie.inbox import enqueue_trigger
 from innie.runtime import SessionManager
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
+from innie.progress import SLACK_FINAL_TEXT_LIMIT
 
 
 class FakeSlackReplies:
@@ -18,28 +19,74 @@ class FakeSlackReplies:
         self.messages: list[tuple[str, str, str]] = []
         self.updates: list[tuple[str, str, str]] = []
         self.deletes: list[tuple[str, str]] = []
+        self.message_blocks: list[list[dict] | None] = []
+        self.update_blocks: list[list[dict] | None] = []
         self._next_ts = 1
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str:
+    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
         self.messages.append((channel, thread_ts, text))
+        self.message_blocks.append(blocks)
         ts = f"900.{self._next_ts}"
         self._next_ts += 1
         return ts
 
-    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
         self.updates.append((channel, ts, text))
+        self.update_blocks.append(blocks)
 
     def delete_message(self, *, channel: str, ts: str) -> None:
         self.deletes.append((channel, ts))
 
 
-def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1") -> SlackTrigger:
+class FailingFinalUpdateSlack(FakeSlackReplies):
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+        if text.startswith("final"):
+            raise RuntimeError("chat.update failed: msg_too_long")
+        super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
+
+
+class FailingProgressPostSlack(FakeSlackReplies):
+    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+        if text in {"working", "first", "second"}:
+            raise RuntimeError("chat.postMessage failed: rate_limited")
+        return super().post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
+
+
+class FailingProgressUpdateSlack(FakeSlackReplies):
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+        if text in {"working", "first", "second"}:
+            raise RuntimeError("chat.update failed: rate_limited")
+        super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
+
+
+class FailingStreamAdapter:
+    harness_id = "failing"
+    capabilities = HarnessCapabilities(supports_streaming=True)
+
+    async def start_task(self, request):
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        yield HarnessEvent(type="progress", message="working")
+        raise RuntimeError("adapter crashed")
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+
+def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_ts: str | None = None) -> SlackTrigger:
     return SlackTrigger(
         event_id=event_id,
         trigger_type="dm",
         channel_id=channel,
         message_ts=ts,
-        thread_ts=None,
+        thread_ts=thread_ts,
         sender_user_id="U1",
         text=f"text {event_id}",
         payload={"event_id": event_id},
@@ -81,10 +128,10 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(["idle", "idle"], statuses)
             self.assertEqual(2, events.count("harness.output"))
-            self.assertIn(("D1", "100.1", "Progress: working"), slack.messages)
-            self.assertIn(("D2", "200.1", "done"), slack.messages)
+            self.assertIn(("D1", "100.1", "working"), slack.messages)
+            self.assertIn(("D2", "900.2", "done"), slack.updates)
 
-    def test_manager_updates_one_slack_progress_message_and_deletes_it_before_final_output(self) -> None:
+    def test_manager_updates_one_slack_progress_message_and_replaces_it_with_final_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "innie.db"
             db = connect(path)
@@ -115,13 +162,7 @@ class RuntimeTest(unittest.TestCase):
             finally:
                 manager.close()
 
-            self.assertEqual(
-                [
-                    ("D1", "100.1", "*Innie is searching the web*\n> web search"),
-                    ("D1", "100.1", "final answer"),
-                ],
-                slack.messages,
-            )
+            self.assertEqual([("D1", "100.1", "*Innie is searching the web*\n> web search")], slack.messages)
             self.assertEqual(
                 [
                     (
@@ -129,10 +170,301 @@ class RuntimeTest(unittest.TestCase):
                         "900.1",
                         "*Innie is searching the web*\n> Cerebras OpenAI partnership AWS 2026 official Cerebras ...",
                     ),
+                    ("D1", "900.1", "final answer"),
                 ],
                 slack.updates,
             )
+            self.assertEqual("plan", slack.message_blocks[0][0]["type"])
+            self.assertEqual("section", slack.update_blocks[1][0]["type"])
+            self.assertTrue(slack.update_blocks[1][0]["expand"])
+            self.assertEqual("final answer", slack.update_blocks[1][0]["text"]["text"])
+            self.assertEqual("plan", slack.update_blocks[0][0]["type"])
+            self.assertEqual([], slack.deletes)
+
+    def test_manager_keeps_latest_progress_summary_above_tool_widget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="I will check recent primary sources first."),
+                    HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual("section", slack.update_blocks[0][0]["type"])
+            self.assertEqual("innie-progress-summary", slack.update_blocks[0][0]["block_id"])
+            self.assertEqual(
+                "I will check recent primary sources first.",
+                slack.update_blocks[0][0]["text"]["text"],
+            )
+            self.assertEqual("plan", slack.update_blocks[0][1]["type"])
+            self.assertEqual("Innie is searching the web", slack.update_blocks[0][1]["title"])
+
+    def test_manager_deletes_progress_message_and_posts_fallback_when_final_update_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FailingFinalUpdateSlack()
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="working"),
+                    HarnessEvent(type="output", message="final " + ("answer " * 10000)),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                event_output=terminal.append,
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+                task_status = manager.db.execute("SELECT status FROM tasks").fetchone()["status"]
+            finally:
+                manager.close()
+
+            self.assertEqual("completed", task_status)
             self.assertEqual([("D1", "900.1")], slack.deletes)
+            fallback_messages = slack.messages[1:]
+            self.assertGreater(len(fallback_messages), 1)
+            self.assertEqual(("D1", "100.1"), fallback_messages[0][:2])
+            self.assertTrue(fallback_messages[0][2].startswith("final answer"))
+            self.assertTrue(all(len(message[2]) <= SLACK_FINAL_TEXT_LIMIT for message in fallback_messages))
+            self.assertEqual("context", slack.message_blocks[1][0]["type"])
+            self.assertNotIn("Progress details", str(slack.message_blocks[2]))
+            self.assertIn(
+                f"session {session.id} task ",
+                "\n".join(terminal),
+            )
+            self.assertIn("slack final update failed", "\n".join(terminal))
+
+    def test_manager_continues_when_progress_post_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FailingProgressPostSlack()
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="working"),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp), event_output=terminal.append)
+            try:
+                asyncio.run(manager.run_until_idle())
+                task_status = manager.db.execute("SELECT status FROM tasks").fetchone()["status"]
+            finally:
+                manager.close()
+
+            self.assertEqual("completed", task_status)
+            self.assertIn(("D1", "100.1", "final answer"), slack.messages)
+            self.assertIn("slack progress post failed", "\n".join(terminal))
+
+    def test_manager_continues_when_progress_update_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FailingProgressUpdateSlack()
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="first"),
+                    HarnessEvent(type="progress", message="second"),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp), event_output=terminal.append)
+            try:
+                asyncio.run(manager.run_until_idle())
+                task_status = manager.db.execute("SELECT status FROM tasks").fetchone()["status"]
+            finally:
+                manager.close()
+
+            self.assertEqual("completed", task_status)
+            self.assertIn(("D1", "100.1", "final answer"), slack.messages)
+            self.assertIn(("D1", "900.1"), slack.deletes)
+            self.assertIn("slack progress update failed", "\n".join(terminal))
+
+    def test_manager_marks_task_failed_and_replaces_progress_when_adapter_crashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="failing")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            terminal: list[str] = []
+            manager = SessionManager(
+                path,
+                adapters={"failing": FailingStreamAdapter()},
+                slack=slack,
+                workspace=Path(tmp),
+                event_output=terminal.append,
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+                task_status = manager.db.execute("SELECT status FROM tasks").fetchone()["status"]
+                failed_count = manager.db.execute("SELECT COUNT(*) AS count FROM task_events WHERE event_type = 'harness.failed'").fetchone()["count"]
+            finally:
+                manager.close()
+
+            self.assertEqual("failed", task_status)
+            self.assertEqual(1, failed_count)
+            self.assertIn(("D1", "900.1", "Task " + slack.updates[-1][2].split("Task ", 1)[1]), slack.updates)
+            self.assertIn("adapter crashed", slack.updates[-1][2])
+            self.assertIn("failed: adapter crashed", "\n".join(terminal))
+
+    def test_manager_splits_long_final_output_and_only_first_message_has_progress_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            first_line = "a" * (SLACK_FINAL_TEXT_LIMIT - 20)
+            second_line = "second slack message"
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="checking context"),
+                    HarnessEvent(type="output", message=f"{first_line}\n{second_line}"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual(("D1", "900.1", first_line), slack.updates[-1])
+            self.assertEqual(("D1", "100.1", second_line), slack.messages[-1])
+            self.assertEqual("context", slack.update_blocks[-1][0]["type"])
+            self.assertEqual("section", slack.message_blocks[-1][0]["type"])
+            self.assertNotIn("Progress details", str(slack.message_blocks[-1]))
+
+    def test_manager_posts_final_output_with_collapsed_progress_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="checking context"),
+                    HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual(("D1", "900.1", "final answer"), slack.updates[-1])
+            final_blocks = slack.update_blocks[-1]
+            self.assertIsNotNone(final_blocks)
+            self.assertEqual("context", final_blocks[0]["type"])
+            self.assertEqual("actions", final_blocks[1]["type"])
+            self.assertEqual("show more", final_blocks[1]["elements"][0]["text"]["text"])
+            self.assertEqual("final answer", final_blocks[3]["text"]["text"])
+
+    def test_manager_posts_progress_widget_to_root_thread_for_channel_and_threaded_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            root = make_trigger("EvRoot", channel="C1", ts="100.1")
+            reply = make_trigger("EvReply", channel="C1", ts="100.2", thread_ts="100.1")
+            for item in (root, reply):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="scripted")
+                enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            progress_messages = [message for message in slack.messages if message[2].startswith("*Innie is")]
+            self.assertEqual([("C1", "100.1"), ("C1", "100.1")], [(channel, thread_ts) for channel, thread_ts, _ in progress_messages])
 
     def test_manager_logs_task_started_to_terminal_not_slack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,6 +500,48 @@ class RuntimeTest(unittest.TestCase):
             self.assertNotIn(("D1", "100.1", f"Started task {task_id}."), slack.messages)
             self.assertIn(f"session {session.id} task {task_id} started", terminal)
             self.assertIn(f"session {session.id} task {task_id} completed", terminal)
+
+    def test_manager_logs_mapped_harness_and_slack_progress_events_to_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="tool_use", message="web search", payload={"tool_name": "web_search"}),
+                    HarnessEvent(type="tool_use", message="finance: NBIS", payload={"tool_name": "web_search"}),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                event_output=terminal.append,
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+                task_id = manager.db.execute("SELECT id FROM tasks WHERE session_id = ?", (session.id,)).fetchone()["id"]
+            finally:
+                manager.close()
+
+            self.assertIn(f"session {session.id} task {task_id} tool_use web_search: web search", terminal)
+            self.assertIn(f"session {session.id} task {task_id} slack progress posted ts=900.1", terminal)
+            self.assertIn(f"session {session.id} task {task_id} tool_use web_search: finance: NBIS", terminal)
+            self.assertIn(f"session {session.id} task {task_id} slack progress updated ts=900.1", terminal)
+            self.assertIn(f"session {session.id} task {task_id} output: final answer", terminal)
+            self.assertIn(f"session {session.id} task {task_id} slack final updated ts=900.1", terminal)
 
     def test_manager_does_not_duplicate_adapter_started_terminal_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

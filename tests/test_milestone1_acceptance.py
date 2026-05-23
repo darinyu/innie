@@ -23,13 +23,13 @@ class FakeSlack:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self.reactions.append((channel, timestamp, name))
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> str:
+    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
         self.messages.append((channel, thread_ts, text))
         ts = f"900.{self._next_ts}"
         self._next_ts += 1
         return ts
 
-    def update_message(self, *, channel: str, ts: str, text: str) -> None:
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
         self.updates.append((channel, ts, text))
 
     def delete_message(self, *, channel: str, ts: str) -> None:

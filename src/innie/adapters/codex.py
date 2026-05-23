@@ -64,6 +64,7 @@ class CodexCliAdapter:
         if stdout is None:
             yield HarnessEvent(type="failed", message="Codex stdout was not captured")
             return
+        pending_output: HarnessEvent | None = None
         async for raw_line in stdout:
             line = raw_line.decode("utf-8").strip()
             if not line:
@@ -75,6 +76,14 @@ class CodexCliAdapter:
                 continue
             event = _map_codex_event(payload)
             if event is not None:
+                if _is_deferred_output_event(event):
+                    if pending_output is not None:
+                        yield _output_as_progress(pending_output)
+                    pending_output = event
+                    continue
+                if pending_output is not None and event.type in {"progress", "tool_use", "tool_result"}:
+                    yield _output_as_progress(pending_output)
+                    pending_output = None
                 yield event
             elif self._verbose and self._output is not None:
                 self._output(_describe_ignored_event(task_id, payload))
@@ -83,6 +92,8 @@ class CodexCliAdapter:
         if stderr_task is not None:
             await stderr_task
         if returncode == 0:
+            if pending_output is not None:
+                yield pending_output
             yield HarnessEvent(type="completed", message="Codex completed.")
         else:
             message = f"Codex exited with status {returncode}"
@@ -167,7 +178,12 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
             usage=TokenUsage(
                 input_tokens=int(usage.get("input_tokens", 0) or usage.get("input", 0) or 0),
                 output_tokens=int(usage.get("output_tokens", 0) or usage.get("output", 0) or 0),
-                cache_read_tokens=int(usage.get("cache_read_tokens", 0) or usage.get("cache_read_input_tokens", 0) or 0),
+                cache_read_tokens=int(
+                    usage.get("cache_read_tokens", 0)
+                    or usage.get("cache_read_input_tokens", 0)
+                    or usage.get("cached_input_tokens", 0)
+                    or 0
+                ),
                 cache_write_tokens=int(usage.get("cache_write_tokens", 0) or usage.get("cache_write_input_tokens", 0) or 0),
                 cost_usd=usage.get("cost_usd"),
             ),
@@ -176,6 +192,26 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
     if event_type == "session.finished":
         return None
     return None
+
+
+def _is_deferred_output_event(event: HarnessEvent) -> bool:
+    return event.type == "output" and _is_assistant_output_payload(event.payload)
+
+
+def _is_assistant_output_payload(payload: dict[str, Any]) -> bool:
+    event_type = str(payload.get("type", ""))
+    if event_type == "agent_message":
+        return True
+    if event_type in {"item.completed", "response.output_item.done"}:
+        item = payload.get("item") or payload.get("output_item") or payload
+        return isinstance(item, dict) and (
+            item.get("role") == "assistant" or item.get("type") in {"agent_message", "assistant_message", "message"}
+        )
+    return False
+
+
+def _output_as_progress(event: HarnessEvent) -> HarnessEvent:
+    return HarnessEvent(type="progress", message=event.message, payload=event.payload)
 
 
 def _map_tool_item(item: Any) -> HarnessEvent | None:
