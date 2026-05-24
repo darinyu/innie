@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,15 +8,38 @@ version = "0.1.0"
 description = "Slack-first sidekick layer for durable AI work sessions."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Innie Contributors" }]
+keywords = ["agents", "ai", "automation", "codex", "slack"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development",
+]
 dependencies = [
     "aiohttp>=3.13.5",
     "slack-sdk>=3.41.0",
 ]
 
+[project.optional-dependencies]
+terminal = ["rich>=13"]
+
 [project.scripts]
 innie = "innie.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/darinyu/innie"
+Source = "https://github.com/darinyu/innie"
+Issues = "https://github.com/darinyu/innie/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/innie"]
@@ -30,5 +53,9 @@ include = [
     "/tests",
     "/README.md",
     "/LICENSE",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/docs/pypi-release.md",
     "/.github/workflows",
 ]

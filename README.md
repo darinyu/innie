@@ -1,7 +1,6 @@
 # Innie
 
 [![CI](https://github.com/darinyu/innie/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/darinyu/innie/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/innie.svg)](https://pypi.org/project/innie/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
@@ -176,6 +175,19 @@ is read-only and can be run alongside `innie run`.
 Read [`docs/initial-plan.md`](docs/initial-plan.md) for the current product and
 architecture plan.
 
+## PyPI Release Goal
+
+Innie is not published on PyPI yet. The release goal is `0.1.0`, a first
+release that can be installed with:
+
+```bash
+pipx install innie
+```
+
+Before publishing, the package must build clean wheel and source distributions,
+pass metadata checks, and smoke-test the installed wheel in CI. See
+[`docs/pypi-release.md`](docs/pypi-release.md) for the release checklist.
+
 ## Requirements
 
 - Python 3.10+.
@@ -231,8 +243,6 @@ Design constraints:
 
 Open-source hygiene still to add:
 
-- `CONTRIBUTING.md` with development setup, test expectations, and PR guidance.
-- `SECURITY.md` with vulnerability reporting and secret-handling expectations.
 - `CODE_OF_CONDUCT.md` if the project wants an explicit community standard.
 - GitHub issue templates once the contribution surface is clearer.
 
