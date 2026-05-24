@@ -414,8 +414,6 @@ class SessionActor:
                 "worker.slack_delivery_failed",
                 {"operation": "progress_update", "channel": current_channel, "ts": ts, "error": str(exc)},
             )
-            self._progress_messages.pop(task_id, None)
-            self._delete_slack_message(current_channel, ts, task_id, "progress")
 
     def _delete_progress_message(self, task_id: str) -> None:
         if self._slack is None:
