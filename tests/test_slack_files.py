@@ -145,6 +145,51 @@ class SlackFilesTest(unittest.TestCase):
             self.assertEqual(3, db.execute("SELECT COUNT(*) AS count FROM slack_files").fetchone()["count"])
             self.assertEqual(3, len(client.downloads))
 
+    def test_stage_slack_files_falls_back_to_untruncated_text_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            db = connect(workspace / "innie.db")
+            initialize_schema(db)
+            seed_session(db)
+            trigger = SlackTrigger(
+                event_id="EvSnippet",
+                trigger_type="dm",
+                channel_id="D1",
+                message_ts="100.1",
+                thread_ts=None,
+                sender_user_id="U1",
+                text="read this",
+                payload={
+                    "event_id": "EvSnippet",
+                    "event": {
+                        "files": [
+                            {
+                                "id": "F1",
+                                "name": "test_codex.txt",
+                                "mimetype": "text/plain",
+                                "filetype": "text",
+                                "mode": "snippet",
+                                "preview": "helloworld\n",
+                                "preview_is_truncated": False,
+                                "url_private_download": "https://files.example/F1",
+                            },
+                        ]
+                    },
+                },
+            )
+
+            records = stage_slack_files_for_trigger(
+                db,
+                workspace=workspace,
+                session_id="sess_1",
+                trigger=trigger,
+                file_client=FakeFileClient(failures={"https://files.example/F1": RuntimeError("slack_login_redirect")}),
+            )
+
+            self.assertEqual(["staged"], [record.status for record in records])
+            self.assertEqual("helloworld\n", Path(records[0].local_path).read_text())
+            self.assertEqual(len("helloworld\n".encode("utf-8")), records[0].byte_count)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,8 @@ class SlackWebClient:
         req.add_header("Authorization", f"Bearer {self._token}")
         with request.urlopen(req, timeout=60) as resp:
             data = resp.read()
+        if _looks_like_slack_login_redirect(data):
+            raise SlackApiError("slack_file_download_failed: slack_login_redirect")
         destination.write_bytes(data)
         return len(data)
 
@@ -66,3 +68,14 @@ class SlackWebClient:
         if not result.get("ok"):
             raise SlackApiError(f"{method} failed: {result.get('error', 'unknown_error')}")
         return result
+
+
+def _looks_like_slack_login_redirect(data: bytes) -> bool:
+    sample = data[:131072].lower()
+    has_files_redirect = b"/files-pri/" in sample or b"\\/files-pri\\/" in sample or b"%2ffiles-pri" in sample
+    return (
+        b"<title>slack</title>" in sample
+        and b"redirecturl" in sample
+        and has_files_redirect
+        and b"loggedinteams" in sample
+    )

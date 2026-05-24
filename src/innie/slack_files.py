@@ -75,9 +75,16 @@ def stage_slack_files_for_trigger(
                 local_path = str(destination)
                 status = "staged"
             except Exception as exc:
-                error = str(exc) or exc.__class__.__name__
                 if destination.exists():
                     destination.unlink()
+                preview = _untruncated_text_preview(file_info)
+                if preview is not None:
+                    destination.write_bytes(preview)
+                    byte_count = len(preview)
+                    local_path = str(destination)
+                    status = "staged"
+                else:
+                    error = str(exc) or exc.__class__.__name__
 
         db.execute(
             """
@@ -221,6 +228,20 @@ def _safe_filename(name: str) -> str:
     base = Path(name).name.strip() or "file"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("._")
     return safe or "file"
+
+
+def _untruncated_text_preview(file_info: dict[str, Any]) -> bytes | None:
+    preview = file_info.get("preview")
+    if not isinstance(preview, str):
+        return None
+    if file_info.get("preview_is_truncated") is not False:
+        return None
+    mimetype = _optional_str(file_info.get("mimetype")) or ""
+    filetype = _optional_str(file_info.get("filetype")) or ""
+    mode = _optional_str(file_info.get("mode")) or ""
+    if not (mimetype.startswith("text/") or filetype == "text" or mode == "snippet"):
+        return None
+    return preview.encode("utf-8")
 
 
 def _optional_str(value: Any) -> str | None:
