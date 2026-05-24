@@ -8,7 +8,13 @@ import tempfile
 import unittest
 from unittest import mock
 
-from innie.slack_setup import _collect_oauth_code, build_manifest, run_slack_setup
+from innie.slack_setup import (
+    _collect_oauth_code,
+    _oauth_lines,
+    _plain_text,
+    build_manifest,
+    run_slack_setup,
+)
 
 
 class FakeSlackApi:
@@ -206,6 +212,44 @@ class SlackSetupTest(unittest.TestCase):
             )
 
         self.assertEqual("auto-code", code)
+
+    def test_oauth_collector_prints_clear_local_and_remote_actions(self) -> None:
+        server = FakeOAuthServer()
+        outputs: list[str] = []
+        url = "https://slack.com/oauth/v2/authorize?client_id=123"
+
+        with mock.patch("innie.slack_setup.http.server.HTTPServer", return_value=server):
+            code = _collect_oauth_code(
+                "http://localhost:8765/callback",
+                url,
+                prompt=lambda _text: self.fail("prompt should not block before callback"),
+                output=outputs.append,
+                messages=[],
+                timeout_seconds=2,
+                on_server_started=lambda: "auto-code",
+            )
+
+        self.assertEqual("auto-code", code)
+        output_text = "\n".join(outputs)
+        self.assertIn(url, output_text)
+        self.assertIn("LOCAL BROWSER:", output_text)
+        self.assertIn("REMOTE BROWSER:", output_text)
+        self.assertIn("Innie continues automatically", output_text)
+        self.assertNotIn("wait for the paste fallback below", output_text)
+
+    def test_oauth_instructions_put_url_second_and_label_local_remote_paths(self) -> None:
+        url = "https://slack.com/oauth/v2/authorize?client_id=123"
+
+        text = _plain_text(_oauth_lines(url))
+
+        lines = text.splitlines()
+        self.assertEqual("Step 5/6 - Install the app with OAuth.", lines[0])
+        self.assertEqual(url, lines[1])
+        self.assertIn("LOCAL BROWSER:", text)
+        self.assertIn("REMOTE BROWSER:", text)
+        self.assertIn("Innie continues automatically", text)
+        self.assertIn("copy the browser's final callback URL and paste it when prompted", text)
+        self.assertNotIn("wait for the paste fallback below", text)
 
 
 class FakeOAuthServer:
