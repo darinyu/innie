@@ -145,16 +145,17 @@ function runsPage() {
     <h1 class="page-title">Runs</h1>
     <p class="subtitle">Recent Innie sessions from the local durable store.</p>
     <div class="metrics">
-      ${metric("Sessions", counts.sessions)}
-      ${metric("Running", counts.running_sessions)}
-      ${metric("Queued", counts.queued_inputs)}
-      ${metric("Failed", counts.failed_tasks)}
+      ${metric("Sessions", counts.sessions, "status", "all")}
+      ${metric("Running", counts.running_sessions, "status", "running")}
+      ${metric("Queued", counts.queued_inputs, "status", "queued")}
+      ${metric("Failed", counts.failed_tasks, "status", "failed")}
       ${metric("Locked", counts.locked_sessions)}
     </div>
     <div class="toolbar">
       <div class="segmented" aria-label="Status filter">
         ${segment("status", "all", "All", state.filters.status)}
         ${segment("status", "running", "Running", state.filters.status)}
+        ${segment("status", "queued", "Queued", state.filters.status)}
         ${segment("status", "completed", "Completed", state.filters.status)}
         ${segment("status", "failed", "Failed", state.filters.status)}
       </div>
@@ -259,12 +260,17 @@ function sessionSwitchRow(row, activeId) {
     <button class="session-switch-row ${row.id === activeId ? "active" : ""}" data-session="${escapeAttr(row.id)}">
       <span class="switch-row-top">
         <span class="switch-id">${escapeHtml(shortId(row.id))}</span>
-        ${chip(row.status)}
+        ${chip(sessionListStatus(row))}
       </span>
       <span class="switch-preview">${escapeHtml(preview)}</span>
       <span class="switch-meta">${escapeHtml(row.harness_id || "none")} · ${formatTime(row.updated_at)}</span>
     </button>
   `;
+}
+
+function sessionListStatus(row) {
+  if (row.latest_task_status === "failed") return "failed";
+  return row.status;
 }
 
 function latestPrompt(detail) {
@@ -618,8 +624,21 @@ async function api(path) {
   return payload;
 }
 
-function metric(label, value) {
-  return `<div class="metric"><span class="metric-label">${label}</span><span class="metric-value">${value ?? 0}</span></div>`;
+function metric(label, value, filter, filterValue) {
+  const content = `<span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(value ?? 0)}</span>`;
+  if (!filter || !filterValue) {
+    return `<div class="metric">${content}</div>`;
+  }
+  const active = filterValue === state.filters[filter];
+  return `
+    <button
+      class="metric metric-button ${active ? "active" : ""}"
+      data-filter-button="${escapeAttr(filter)}"
+      data-value="${escapeAttr(filterValue)}"
+      aria-pressed="${filterValue === state.filters[filter] ? "true" : "false"}"
+      title="Filter ${escapeAttr(label)} sessions"
+    >${content}</button>
+  `;
 }
 
 function segment(filter, value, label, current) {

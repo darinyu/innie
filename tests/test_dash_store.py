@@ -39,6 +39,58 @@ class SqliteInnieStoreTest(unittest.TestCase):
         self.assertEqual(rows[0]["queued_inputs"], 2)
         self.assertEqual(rows[0]["last_event_type"], "harness.progress")
 
+    def test_list_sessions_supports_queued_inbox_filter(self) -> None:
+        store = SqliteInnieStore(self.db_path)
+
+        rows = store.list_sessions(status="queued")["items"]
+
+        self.assertEqual([row["id"] for row in rows], ["sess_running"])
+        self.assertEqual(rows[0]["queued_inputs"], 2)
+
+    def test_list_sessions_supports_failed_task_filter(self) -> None:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "sess_idle_failed_task",
+                "C3",
+                "4",
+                "4",
+                "slack",
+                "slack",
+                "idle",
+                "codex",
+                "2026-01-01T00:06:00Z",
+                "2026-01-01T00:07:00Z",
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "task_idle_failed",
+                "sess_idle_failed_task",
+                "failed",
+                "debug failed turn",
+                "slack",
+                "codex",
+                "autonomous",
+                "2026-01-01T00:06:00Z",
+                "2026-01-01T00:07:00Z",
+                "2026-01-01T00:07:00Z",
+            ),
+        )
+        conn.commit()
+        conn.close()
+        store = SqliteInnieStore(self.db_path)
+
+        rows = store.list_sessions(status="failed")["items"]
+
+        self.assertEqual([row["id"] for row in rows], ["sess_idle_failed_task", "sess_failed"])
+
     def test_session_detail_includes_related_rows(self) -> None:
         store = SqliteInnieStore(self.db_path)
 
