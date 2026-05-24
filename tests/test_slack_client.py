@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 
-from innie.slack_client import SlackApiError, SlackWebClient
+from innie.slack_client import SlackWebClient
 
 
 def run_server(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, threading.Thread]:
@@ -52,12 +52,13 @@ class SlackWebClientTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 destination = Path(tmp) / "test.txt"
 
-                byte_count = SlackWebClient(token).download_file(
+                result = SlackWebClient(token).download_file(
                     f"http://127.0.0.1:{redirect_server.server_port}/download/test.txt",
                     destination,
                 )
 
-                self.assertEqual(len(actual_body), byte_count)
+                self.assertIsNone(result.error)
+                self.assertEqual(len(actual_body), result.byte_count)
                 self.assertEqual(actual_body, destination.read_bytes())
                 self.assertEqual([f"Bearer {token}"], seen_authorization)
         finally:
@@ -88,12 +89,12 @@ class SlackWebClientTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 destination = Path(tmp) / "test.txt"
 
-                with self.assertRaisesRegex(SlackApiError, "slack_login_redirect"):
-                    SlackWebClient("xoxb-test-token").download_file(
-                        f"http://127.0.0.1:{server.server_port}/download/test.txt",
-                        destination,
-                    )
+                result = SlackWebClient("xoxb-test-token").download_file(
+                    f"http://127.0.0.1:{server.server_port}/download/test.txt",
+                    destination,
+                )
 
+                self.assertEqual("slack_login_redirect", result.error)
                 self.assertFalse(destination.exists())
         finally:
             server.shutdown()

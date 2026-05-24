@@ -25,8 +25,14 @@ class SlackFileRecord:
     error: str | None
 
 
+@dataclass(frozen=True)
+class SlackFileDownloadResult:
+    byte_count: int = 0
+    error: str | None = None
+
+
 class SlackFileClient(Protocol):
-    def download_file(self, url: str, destination: Path) -> int:
+    def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         ...
 
 
@@ -65,26 +71,28 @@ def stage_slack_files_for_trigger(
         status = "failed"
         error: str | None = None
 
-        if not url:
+        preview = _untruncated_text_preview(file_info)
+        if preview is not None:
+            destination = _unique_destination(event_dir, name, used_paths)
+            used_paths.add(destination)
+            destination.write_bytes(preview)
+            byte_count = len(preview)
+            local_path = str(destination)
+            status = "staged"
+        elif not url:
             error = "missing_download_url"
         else:
             destination = _unique_destination(event_dir, name, used_paths)
             used_paths.add(destination)
-            try:
-                byte_count = int(file_client.download_file(url, destination))
-                local_path = str(destination)
-                status = "staged"
-            except Exception as exc:
+            result = file_client.download_file(url, destination)
+            if result.error:
                 if destination.exists():
                     destination.unlink()
-                preview = _untruncated_text_preview(file_info)
-                if preview is not None:
-                    destination.write_bytes(preview)
-                    byte_count = len(preview)
-                    local_path = str(destination)
-                    status = "staged"
-                else:
-                    error = str(exc) or exc.__class__.__name__
+                error = result.error
+            else:
+                byte_count = result.byte_count
+                local_path = str(destination)
+                status = "staged"
 
         db.execute(
             """

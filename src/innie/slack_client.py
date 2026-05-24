@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
+from .slack_files import SlackFileDownloadResult
+
 
 class SlackApiError(RuntimeError):
     pass
@@ -47,16 +49,19 @@ class SlackWebClient:
     def delete_message(self, *, channel: str, ts: str) -> None:
         self._post_json("chat.delete", {"channel": channel, "ts": ts})
 
-    def download_file(self, url: str, destination: Path) -> int:
+    def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         destination.parent.mkdir(parents=True, exist_ok=True)
         req = request.Request(url)
         req.add_header("Authorization", f"Bearer {self._token}")
-        with request.urlopen(req, timeout=60) as resp:
-            data = resp.read()
+        try:
+            with request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+        except Exception as exc:
+            return SlackFileDownloadResult(error=str(exc) or exc.__class__.__name__)
         if _looks_like_slack_login_redirect(data):
-            raise SlackApiError("slack_file_download_failed: slack_login_redirect")
+            return SlackFileDownloadResult(error="slack_login_redirect")
         destination.write_bytes(data)
-        return len(data)
+        return SlackFileDownloadResult(byte_count=len(data))
 
     def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")

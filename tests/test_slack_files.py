@@ -7,6 +7,7 @@ import unittest
 from innie.db import connect, initialize_schema
 from innie.slack_events import SlackTrigger
 from innie.slack_files import (
+    SlackFileDownloadResult,
     format_file_prompt_sections,
     list_files_for_inbox,
     stage_slack_files_for_trigger,
@@ -18,12 +19,13 @@ class FakeFileClient:
         self.failures = failures or {}
         self.downloads: list[tuple[str, Path]] = []
 
-    def download_file(self, url: str, destination: Path) -> int:
+    def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         self.downloads.append((url, destination))
         if url in self.failures:
-            raise self.failures[url]
+            exc = self.failures[url]
+            return SlackFileDownloadResult(error=str(exc) or exc.__class__.__name__)
         destination.write_bytes(f"contents for {url}".encode("utf-8"))
-        return destination.stat().st_size
+        return SlackFileDownloadResult(byte_count=destination.stat().st_size)
 
 
 def trigger_with_files(event_id: str = "EvFile") -> SlackTrigger:
@@ -145,7 +147,7 @@ class SlackFilesTest(unittest.TestCase):
             self.assertEqual(3, db.execute("SELECT COUNT(*) AS count FROM slack_files").fetchone()["count"])
             self.assertEqual(3, len(client.downloads))
 
-    def test_stage_slack_files_falls_back_to_untruncated_text_preview(self) -> None:
+    def test_stage_slack_files_stages_untruncated_text_preview_without_download(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             db = connect(workspace / "innie.db")
@@ -178,17 +180,20 @@ class SlackFilesTest(unittest.TestCase):
                 },
             )
 
+            client = FakeFileClient()
+
             records = stage_slack_files_for_trigger(
                 db,
                 workspace=workspace,
                 session_id="sess_1",
                 trigger=trigger,
-                file_client=FakeFileClient(failures={"https://files.example/F1": RuntimeError("slack_login_redirect")}),
+                file_client=client,
             )
 
             self.assertEqual(["staged"], [record.status for record in records])
             self.assertEqual("helloworld\n", Path(records[0].local_path).read_text())
             self.assertEqual(len("helloworld\n".encode("utf-8")), records[0].byte_count)
+            self.assertEqual([], client.downloads)
 
 
 if __name__ == "__main__":
