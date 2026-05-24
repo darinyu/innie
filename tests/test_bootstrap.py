@@ -59,6 +59,23 @@ class BootstrapTest(unittest.TestCase):
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
             self.assertIn("slack_config: missing", "\n".join(result.messages))
 
+    def test_init_rerun_preserves_existing_config_and_reports_reused_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            first = init_workspace(workspace, assume_yes=True)
+            config_path = workspace / ".innie" / "config.yaml"
+            config_path.write_text("workspace_version: 1\ncustom: keep-me\n", encoding="utf-8")
+
+            second = init_workspace(workspace, assume_yes=True)
+
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual("workspace_version: 1\ncustom: keep-me\n", config_path.read_text(encoding="utf-8"))
+            messages = "\n".join(second.messages)
+            self.assertIn("Using existing Innie local state", messages)
+            self.assertIn("Using existing workspace config", messages)
+            self.assertIn("Initialized or verified database", messages)
+
     def test_missing_harness_message_names_supported_opt_in_harnesses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)

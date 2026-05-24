@@ -118,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.skip_slack_setup:
             print("Skipped Slack setup. Run `innie slack setup` when ready.")
             return 0
+        if _slack_configured(state_dir):
+            print("Slack setup already configured. Run `innie slack setup` to update it.")
+            return 0
         if args.yes or _confirm_default_yes("Set up Slack now? [Y/n] "):
             slack_result = run_slack_setup(state_dir, prompt_secret=prompt_masked_secret)
             for line in slack_result.messages:
@@ -233,6 +236,25 @@ def _open_workspace_db(workspace: Path):
 
 def _confirm_default_yes(prompt: str) -> bool:
     return input(prompt).strip().lower() not in {"n", "no"}
+
+
+def _slack_configured(workspace: Path) -> bool:
+    config_path = innie_dir(workspace) / "config.yaml"
+    if not config_path.exists():
+        return False
+    in_slack_section = False
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line.startswith("slack:"):
+            in_slack_section = True
+            continue
+        if line and not line.startswith((" ", "\t")):
+            in_slack_section = False
+        if in_slack_section and stripped == "configured: true":
+            return True
+    return False
 
 
 def _print_run(message: str) -> None:
