@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Innie app icon</title>
+  <desc id="desc">Innie percent-inspired app icon in the Black Ice palette.</desc>
+  <rect width="512" height="512" rx="88" fill="#05070A"/>
+  <g transform="scale(2.6947368421)">
+    <rect x="88" y="48" width="14" height="96" rx="7" transform="rotate(38 95 96)" fill="#EEF6FF"/>
+    <circle cx="66" cy="66" r="16" fill="#EEF6FF"/>
+    <circle cx="124" cy="124" r="18" fill="#93C5FD"/>
+    <circle cx="124" cy="124" r="5" fill="#05070A"/>
+  </g>
+</svg>

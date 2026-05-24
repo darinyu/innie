@@ -166,7 +166,12 @@ innie init --skip-slack-setup
 innie status <session-id>
 innie logs <session-id>
 innie cancel <session-id>
+innie dash
 ```
+
+`innie dash` starts a lightweight local web dashboard for the selected
+workspace. It reads `.innie/innie.db` and `.innie/logs/innie.log` directly, so it
+is read-only and can be run alongside `innie run`.
 
 Read [`docs/initial-plan.md`](docs/initial-plan.md) for the current product and
 architecture plan.

@@ -17,3 +17,18 @@ dependencies = [
 
 [project.scripts]
 innie = "innie.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/innie"]
+artifacts = [
+    "src/innie/dash/web/**",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/.github/workflows",
+]
