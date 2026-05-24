@@ -69,18 +69,22 @@ class SlackSetupTest(unittest.TestCase):
                     "client-secret",
                     "",
                     "http://localhost:8765/callback?code=abc123",
-                    "xapp-token",
+                    "xapp-valid-token",
                 ]
             )
 
-            result = run_slack_setup(
-                workspace,
-                api=FakeSlackApi(),
-                prompt=lambda text: prompts.append(text) or next(answers),
-                prompt_secret=lambda text: prompts.append(text) or next(answers),
-                output=outputs.append,
-                oauth_timeout_seconds=0,
-            )
+            with (
+                mock.patch("innie.slack_setup._port_in_use", return_value=False),
+                mock.patch("innie.slack_setup.http.server.HTTPServer", side_effect=OSError("busy")),
+            ):
+                result = run_slack_setup(
+                    workspace,
+                    api=FakeSlackApi(),
+                    prompt=lambda text: prompts.append(text) or next(answers),
+                    prompt_secret=lambda text: prompts.append(text) or next(answers),
+                    output=outputs.append,
+                    oauth_timeout_seconds=0,
+                )
 
             self.assertTrue(result.ok, result.messages)
             self.assertIn("Next:", "\n".join(result.messages))
@@ -94,7 +98,7 @@ class SlackSetupTest(unittest.TestCase):
             secrets_path = workspace / ".innie" / "secrets.json"
             secrets = json.loads(secrets_path.read_text())
             self.assertEqual("xoxb-token", secrets["slack_bot_token"])
-            self.assertEqual("xapp-token", secrets["slack_app_token"])
+            self.assertEqual("xapp-valid-token", secrets["slack_app_token"])
             mode = os.stat(secrets_path).st_mode & 0o777
             self.assertEqual(0o600, mode)
             prompt_text = "\n".join(prompts)
@@ -126,18 +130,22 @@ class SlackSetupTest(unittest.TestCase):
                     "client-secret",
                     "A123",
                     "abc123",
-                    "xapp-token",
+                    "xapp-valid-token",
                 ]
             )
 
-            result = run_slack_setup(
-                workspace,
-                api=FakeSlackApi(),
-                prompt=lambda _text: next(answers),
-                prompt_secret=lambda _text: next(answers),
-                output=lambda _text: None,
-                oauth_timeout_seconds=0,
-            )
+            with (
+                mock.patch("innie.slack_setup._port_in_use", return_value=False),
+                mock.patch("innie.slack_setup.http.server.HTTPServer", side_effect=OSError("busy")),
+            ):
+                result = run_slack_setup(
+                    workspace,
+                    api=FakeSlackApi(),
+                    prompt=lambda _text: next(answers),
+                    prompt_secret=lambda _text: next(answers),
+                    output=lambda _text: None,
+                    oauth_timeout_seconds=0,
+                )
 
             self.assertTrue(result.ok, result.messages)
             manifest = json.loads((workspace / ".innie" / "slack-manifest.json").read_text())
@@ -162,19 +170,23 @@ class SlackSetupTest(unittest.TestCase):
                     "",
                     "abc123",
                     "",
-                    "xapp-token",
+                    "xapp-valid-token",
                 ]
             )
             outputs: list[str] = []
 
-            result = run_slack_setup(
-                workspace,
-                api=FakeSlackApi(),
-                prompt=lambda _text: next(answers),
-                prompt_secret=lambda _text: next(answers),
-                output=outputs.append,
-                oauth_timeout_seconds=0,
-            )
+            with (
+                mock.patch("innie.slack_setup._port_in_use", return_value=False),
+                mock.patch("innie.slack_setup.http.server.HTTPServer", side_effect=OSError("busy")),
+            ):
+                result = run_slack_setup(
+                    workspace,
+                    api=FakeSlackApi(),
+                    prompt=lambda _text: next(answers),
+                    prompt_secret=lambda _text: next(answers),
+                    output=outputs.append,
+                    oauth_timeout_seconds=0,
+                )
 
             self.assertTrue(result.ok, result.messages)
             self.assertIn("No token entered", "\n".join(outputs))
