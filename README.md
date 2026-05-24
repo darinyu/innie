@@ -163,9 +163,6 @@ Useful local commands:
 
 ```bash
 innie init --skip-slack-setup
-innie status <session-id>
-innie logs <session-id>
-innie cancel <session-id>
 innie dash
 ```
 
