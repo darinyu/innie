@@ -37,14 +37,17 @@ def main(argv: list[str] | None = None) -> int:
     src_dir = repo_root / "src"
     bin_dir = args.bin_dir or _default_bin_dir()
     target = bin_dir / "innie"
+    already_installed = target.exists()
     bin_dir.mkdir(parents=True, exist_ok=True)
     target.write_text(_launcher(src_dir), encoding="utf-8")
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    print(f"Installed innie command: {target}")
+    action = "Updated" if already_installed else "Installed"
+    print(f"{action} innie command: {target}")
     if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
         print(f"Add this directory to PATH if needed: {bin_dir}")
     print("Start with: innie init")
+    print("Safe to rerun: dependencies are checked again and the launcher is refreshed.")
     return 0
 
 

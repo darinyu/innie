@@ -56,6 +56,21 @@ class InstallScriptTest(unittest.TestCase):
                     self.assertTrue((bin_dir / "innie").exists())
                     self.assertIn(f"Installed innie command: {bin_dir / 'innie'}", out.getvalue())
 
+    def test_install_script_updates_existing_innie_command_on_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp)
+            command = bin_dir / "innie"
+            command.write_text("#!/bin/sh\nexit 42\n", encoding="utf-8")
+            out = StringIO()
+            with mock.patch("scripts.install.importlib.util.find_spec", return_value=object()):
+                with redirect_stdout(out):
+                    self.assertEqual(0, main(["--bin-dir", str(bin_dir)]))
+
+            self.assertIn("run_module(\"innie\"", command.read_text(encoding="utf-8"))
+            self.assertTrue(os.access(command, os.X_OK))
+            self.assertIn("Updated innie command", out.getvalue())
+            self.assertIn("Safe to rerun", out.getvalue())
+
     def test_install_script_defaults_to_installing_rich(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("scripts.install.importlib.util.find_spec", side_effect=_missing_only("rich")):

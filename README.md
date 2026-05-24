@@ -78,7 +78,8 @@ cd innie
 ### 2. Check And Install Dependencies
 
 Install the `innie` command from this checkout. The provided script checks local
-dependencies and installs the command:
+dependencies and installs or refreshes the command. It is safe to rerun after
+pulling updates:
 
 ```bash
 python3 scripts/install.py
@@ -91,6 +92,10 @@ Create local state and start the guided Slack setup wizard:
 ```bash
 innie init
 ```
+
+It is safe to rerun `innie init`. Existing local state and Slack configuration
+are kept; rerun `innie slack setup` when you intentionally want to update Slack
+tokens or app settings.
 
 To create local state without Slack setup:
 
