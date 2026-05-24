@@ -205,6 +205,54 @@ class SlackFilesTest(unittest.TestCase):
                 client.downloads,
             )
 
+    def test_stage_slack_files_deduplicates_repeated_download_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            db = connect(workspace / "innie.db")
+            initialize_schema(db)
+            seed_session(db)
+            trigger = SlackTrigger(
+                event_id="EvSnippet",
+                trigger_type="dm",
+                channel_id="D1",
+                message_ts="100.1",
+                thread_ts=None,
+                sender_user_id="U1",
+                text="read this",
+                payload={
+                    "event_id": "EvSnippet",
+                    "event": {
+                        "files": [
+                            {
+                                "id": "F1",
+                                "name": "test_codex.txt",
+                                "mimetype": "text/plain",
+                                "filetype": "text",
+                                "url_private_download": "https://files.example/F1",
+                                "url_private": "https://files.example/F1-private",
+                            },
+                        ]
+                    },
+                },
+            )
+            client = FakeFileClient(
+                failures={
+                    "https://files.example/F1": RuntimeError("missing_scope: files:read"),
+                    "https://files.example/F1-private": RuntimeError("missing_scope: files:read"),
+                }
+            )
+
+            records = stage_slack_files_for_trigger(
+                db,
+                workspace=workspace,
+                session_id="sess_1",
+                trigger=trigger,
+                file_client=client,
+            )
+
+            self.assertEqual("failed", records[0].status)
+            self.assertEqual("missing_scope: files:read", records[0].error)
+
 
 if __name__ == "__main__":
     unittest.main()

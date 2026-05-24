@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
+import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from innie.slack_client import SlackWebClient
 
@@ -100,6 +103,47 @@ class SlackWebClientTest(unittest.TestCase):
             server.shutdown()
             thread.join(timeout=2)
             server.server_close()
+
+    def test_download_file_reports_missing_files_read_scope(self) -> None:
+        class FakeResponse:
+            status = 200
+            headers = {}
+
+            def __init__(self, body: bytes) -> None:
+                self._body = io.BytesIO(body)
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+            def read(self) -> bytes:
+                return self._body.read()
+
+        login_body = (
+            b'<!DOCTYPE html><html><head><title>Slack</title></head><body data-props="'
+            b"{&quot;loggedInTeams&quot;:[],&quot;redirectURL&quot;:&quot;\\/files-pri\\/T-F123ABC\\/download\\/test.txt&quot;}"
+            b'"></body></html>'
+        )
+        info_body = json.dumps({"ok": False, "error": "missing_scope", "needed": "files:read"}).encode("utf-8")
+
+        def fake_urlopen(req: object, timeout: int) -> FakeResponse:
+            full_url = req.full_url
+            if full_url == "https://slack.com/api/files.info":
+                return FakeResponse(info_body)
+            return FakeResponse(login_body)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("innie.slack_client.request.urlopen", side_effect=fake_urlopen):
+            destination = Path(tmp) / "test.txt"
+
+            result = SlackWebClient("xoxb-test-token").download_file(
+                "https://files.slack.com/files-pri/T-F123ABC/download/test.txt",
+                destination,
+            )
+
+            self.assertEqual("missing_scope: files:read", result.error)
+            self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":

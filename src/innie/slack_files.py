@@ -83,7 +83,8 @@ def stage_slack_files_for_trigger(
                 if result.error:
                     if destination.exists():
                         destination.unlink()
-                    errors.append(result.error)
+                    if result.error not in errors:
+                        errors.append(result.error)
                     continue
                 byte_count = result.byte_count
                 local_path = str(destination)
