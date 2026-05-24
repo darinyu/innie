@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 APP_JS = Path(__file__).resolve().parents[1] / "src" / "innie" / "dash" / "web" / "app.js"
+APP_CSS = Path(__file__).resolve().parents[1] / "src" / "innie" / "dash" / "web" / "styles.css"
 
 
 class FrontendContractTest(unittest.TestCase):
@@ -47,6 +48,15 @@ class FrontendContractTest(unittest.TestCase):
         self.assertIn("data-log-entry", source)
         self.assertIn("entry-text", source)
         self.assertIn("expanded-payload", source)
+
+    def test_session_log_entry_layout_prevents_text_overlap(self) -> None:
+        source = APP_CSS.read_text(encoding="utf-8")
+
+        self.assertRegex(source, r"\.event\s*\{[^}]*grid-template-columns:\s*minmax\(120px,\s*128px\)\s+minmax\(0,\s*1fr\)")
+        self.assertRegex(source, r"\.log-entry\s+details\s*\{[^}]*overflow:\s*hidden")
+        self.assertRegex(source, r"\.log-entry-summary\s*\{[^}]*min-width:\s*0")
+        self.assertRegex(source, r"\.event-type\s*\{[^}]*overflow:\s*hidden")
+        self.assertRegex(source, r"\.event-message\s*\{[^}]*overflow-wrap:\s*anywhere")
 
     def test_selected_session_refreshes_every_second_without_live_toggle(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")

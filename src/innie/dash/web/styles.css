@@ -724,7 +724,7 @@ tr.clickable:hover td {
 
 .event {
   display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-columns: minmax(120px, 128px) minmax(0, 1fr);
   gap: 10px;
   border-bottom: 1px solid #eef2f6;
   padding: 8px 0;
@@ -736,14 +736,19 @@ tr.clickable:hover td {
 }
 
 .event-type {
+  min-width: 0;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .log-entry details {
   min-width: 0;
+  overflow: hidden;
   margin: 0;
 }
 
@@ -751,6 +756,7 @@ tr.clickable:hover td {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   width: 100%;
   cursor: pointer;
   list-style: none;
@@ -792,6 +798,7 @@ tr.clickable:hover td {
   margin-top: 6px;
   color: #344054;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
