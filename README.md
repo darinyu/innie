@@ -8,18 +8,21 @@
 
 **Every worker deserves an innie: an AI work-self you can trigger from Slack anywhere, any time.**
 
-> Innie is an early prototype. The repo contains the first local setup,
-> Slack setup, durable state, hooks, session inspection, Codex and echo adapter
-> paths, and runtime building blocks, but it is not production-ready yet.
+> Innie is an early prototype. The repo contains local setup, guided Slack
+> setup, durable state, hooks, session inspection, the local dashboard, and
+> Codex, Claude Code, and echo adapter paths. It is suitable for local
+> experimentation, not production use.
 
 ![Innie Slack-to-agent workflow](assets/demo/innie-flow.gif)
 
 ## What Is Innie?
 
-Innie is the thinnest customizable layer between Slack and agent harnesses like
-Codex, Claude Code, OpenCode, Goose, and future tools. You run Innie in your own
-dev environment, local or cloud. It keeps work durable, visible, resumable, and
-observable while the selected harness does the actual agent work.
+Innie is the thinnest customizable layer between Slack and agent harnesses. The
+current repo supports Codex CLI, Claude Code, and a diagnostic echo adapter;
+OpenCode, Goose, and custom runtimes are future adapter targets. You run Innie in
+your own dev environment, local or cloud. It keeps Slack-triggered work durable,
+visible, resumable where the harness supports it, and observable while the
+selected harness does the actual agent work.
 
 The human is the **Outie**: the person who asks from Slack, follows progress,
 and receives the result.
@@ -30,12 +33,12 @@ operating envelope around them:
 
 - **Slack in, Slack out**: trigger work from Slack and get replies back in the
   thread.
-- **Harness-neutral boundary**: keep Codex CLI, Claude Code, OpenCode, Goose,
-  and custom runtimes behind adapters.
+- **Harness adapter boundary**: keep Codex CLI, Claude Code, echo, and future
+  runtimes behind adapters.
 - **Your environment, your access**: run the harness where your repos, CLIs,
   MCP servers, credentials, and local tools already work.
 - **Durable by default**: persist sessions, queued follow-ups, progress events,
-  schedules, recovery state, and observability data.
+  harness resume ids, hooks, artifacts, and observability data.
 
 Innie is not a new agent loop, policy engine, model runtime, or semantic memory
 system. It is the minimum product shell that can make a harness feel like a
@@ -48,10 +51,10 @@ Slack
   user asks from phone or desktop
     |
 Innie
-  session state, queue, hooks, progress, schedules, observability
+  session state, queue, hooks, progress, dashboard, observability
     |
 Harness adapter
-  Codex, Claude Code, OpenCode, Goose, or custom runtime
+  Codex CLI, Claude Code, echo, or future runtime
     |
 Your dev environment
   repo, tests, skills, MCPs, tools, logs, artifacts
@@ -107,7 +110,7 @@ For the guided Slack checklist, see
 
 ### 4. Start The Fun
 
-Run a first smoke test, then keep Innie running when you are ready:
+Run a first Slack-routed smoke test, then keep Innie running when you are ready:
 
 ```bash
 innie run --once --harness codex
@@ -170,22 +173,24 @@ innie dash
 
 `innie dash` starts a lightweight local web dashboard for the selected
 workspace. It reads `.innie/innie.db` and `.innie/logs/innie.log` directly, so it
-is read-only and can be run alongside `innie run`.
+is read-only and can be run alongside `innie run`. The dashboard is intended for
+local inspection of sessions, task events, hooks, artifacts, health, and logs.
 
 Read [`docs/initial-plan.md`](docs/initial-plan.md) for the current product and
 architecture plan.
 
 ## PyPI Release Goal
 
-Innie is not published on PyPI yet. The release goal is `0.1.0`, a first
-release that can be installed with:
+Innie is not published on PyPI yet. The repo-side release path targets `0.1.0`,
+a first alpha release that should install with:
 
 ```bash
 pipx install innie
 ```
 
 Before publishing, the package must build clean wheel and source distributions,
-pass metadata checks, and smoke-test the installed wheel in CI. See
+pass metadata checks, smoke-test the installed wheel in CI, and have PyPI trusted
+publishing configured for this repository. See
 [`docs/pypi-release.md`](docs/pypi-release.md) for the release checklist.
 
 ## Requirements
@@ -218,6 +223,9 @@ Near-term prototype milestones:
 - Persist enough state to explain, retry, or resume interrupted work.
 - Make lifecycle hooks stable enough for local customization.
 - Improve observability events, status output, and failure diagnostics.
+- Add scheduled runs after the Slack-triggered loop is stable.
+- Add OpenCode, Goose, or custom adapters after the Codex and Claude paths prove
+  the adapter contract.
 - Add production-oriented docs after the local prototype proves the core loop.
 
 ## Contributing
