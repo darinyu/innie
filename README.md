@@ -3,6 +3,7 @@
 [![CI](https://github.com/darinyu/innie/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/darinyu/innie/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![PyPI](https://img.shields.io/pypi/v/innie.svg)](https://pypi.org/project/innie/)
 
 ![Innie wordmark](assets/logo/innie-wordmark.svg)
 
@@ -174,19 +175,18 @@ local inspection of sessions, task events, hooks, artifacts, health, and logs.
 Read [`docs/initial-plan.md`](docs/initial-plan.md) for the current product and
 architecture plan.
 
-## PyPI Release Goal
+## PyPI
 
-Innie is not published on PyPI yet. The repo-side release path targets `0.1.0`,
-a first alpha release that should install with:
+Innie is published on PyPI as an alpha package:
 
 ```bash
 pipx install innie
 ```
 
-Before publishing, the package must build clean wheel and source distributions,
-pass metadata checks, smoke-test the installed wheel in CI, and have PyPI trusted
-publishing configured for this repository. See
-[`docs/pypi-release.md`](docs/pypi-release.md) for the release checklist.
+The release path builds clean wheel and source distributions, validates package
+metadata, smoke-tests the installed wheel in CI, and publishes through PyPI
+trusted publishing. See [`docs/pypi-release.md`](docs/pypi-release.md) for the
+release checklist.
 
 ## Requirements
 
