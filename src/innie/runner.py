@@ -372,6 +372,7 @@ async def process_payload(
             bot_user_id=bot_user_id,
             watched_user_id=watched_user_id,
             slack=slack,
+            workspace=workspace,
             harness_id=harness_id,
         )
     finally:
