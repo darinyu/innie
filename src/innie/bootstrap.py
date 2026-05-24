@@ -98,7 +98,11 @@ def init_workspace(
         messages.append("Missing required dependencies. Innie did not create local state.")
         return InitResult(ok=False, messages=messages)
 
-    missing_optional = [status for status in statuses if not status.required and not status.ok]
+    missing_optional = [
+        status
+        for status in statuses
+        if not status.required and not status.ok and status.name != "slack_config"
+    ]
     if missing_optional:
         messages.append("Optional setup is incomplete. Innie will not install or change tools without approval.")
         if not assume_yes:
@@ -109,20 +113,29 @@ def init_workspace(
 
     innie_dir = workspace / ".innie"
     artifacts_dir = innie_dir / "artifacts"
+    innie_dir_exists = innie_dir.exists()
+    config_path = innie_dir / "config.yaml"
+    config_exists = config_path.exists()
+    db_path = innie_dir / "innie.db"
     innie_dir.mkdir(parents=True, exist_ok=True)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    config_path = innie_dir / "config.yaml"
     if not config_path.exists():
         config_path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
 
-    db_path = innie_dir / "innie.db"
     with connect(db_path) as db:
         initialize_schema(db)
         _record_dependency_status(db, statuses)
 
-    messages.append(f"Created Innie local state: {innie_dir}")
-    messages.append(f"Initialized database: {db_path}")
+    if innie_dir_exists:
+        messages.append(f"Using existing Innie local state: {innie_dir}")
+    else:
+        messages.append(f"Created Innie local state: {innie_dir}")
+    if config_exists:
+        messages.append(f"Using existing workspace config: {config_path}")
+    else:
+        messages.append(f"Created workspace config: {config_path}")
+    messages.append(f"Initialized or verified database: {db_path}")
     return InitResult(ok=True, messages=messages)
 
 

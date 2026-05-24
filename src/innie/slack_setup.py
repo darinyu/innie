@@ -355,19 +355,19 @@ def _collect_oauth_code(
         server = http.server.HTTPServer(("localhost", port), Handler)
     except OSError:
         value = prompt(
-            "Step 5/6 - Local callback could not start.\n"
-            f"  Open this URL: {oauth_url}\n"
-            "  Paste final callback URL or OAuth code from your browser: "
+            _plain_text(
+                [
+                    "Step 5/6 - Local callback could not start.",
+                    oauth_url,
+                    "REMOTE BROWSER: Copy the browser's final callback URL and paste it here.",
+                ]
+            )
+            + "\nPaste final callback URL or OAuth code: "
         ).strip()
         return _extract_code(value)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    output(
-        "Step 5/6 - Install the app with OAuth.\n"
-        f"  Open this URL: {oauth_url}\n"
-        "  If your browser can reach localhost, Innie continues automatically after approval.\n"
-        "  If the browser cannot reach localhost, wait for the paste fallback below.\n"
-    )
+    output(_render_oauth_instructions(oauth_url))
     if on_server_started:
         callback_code = on_server_started()
         if callback_code:
@@ -383,6 +383,42 @@ def _collect_oauth_code(
         value = prompt("Step 5/6 - Paste final callback URL or OAuth code from your browser: ").strip()
         return _extract_code(value)
     return result["code"]
+
+
+def _oauth_lines(oauth_url: str) -> list[str]:
+    return [
+        "Step 5/6 - Install the app with OAuth.",
+        oauth_url,
+        "LOCAL BROWSER: Approve in Slack. Innie continues automatically when the localhost callback opens.",
+        "REMOTE BROWSER: If Slack cannot open localhost, copy the browser's final callback URL and paste it when prompted.",
+    ]
+
+
+def _plain_text(lines: list[str]) -> str:
+    return "\n".join(lines)
+
+
+def _render_oauth_instructions(oauth_url: str) -> str:
+    lines = _oauth_lines(oauth_url)
+    try:
+        from rich.console import Console
+        from rich.text import Text
+    except ImportError:
+        return _plain_text(lines)
+
+    text = Text()
+    text.append(lines[0] + "\n", style="bold cyan")
+    text.append(lines[1] + "\n", style="bold")
+    for line in lines[2:]:
+        label, body = line.split(":", 1)
+        text.append(label + ":", style="bold green" if label == "LOCAL BROWSER" else "bold yellow")
+        text.append(body + "\n")
+    from io import StringIO
+
+    file = StringIO()
+    console = Console(file=file, force_terminal=True, color_system="auto", width=max(120, len(oauth_url) + 1))
+    console.print(text, end="")
+    return file.getvalue().rstrip()
 
 
 def _extract_code(value: str) -> str:
