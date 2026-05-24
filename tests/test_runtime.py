@@ -12,7 +12,7 @@ from innie.inbox import enqueue_trigger
 from innie.runtime import SessionManager
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
-from innie.progress import SLACK_FINAL_TEXT_LIMIT
+from innie.progress import SLACK_FINAL_TEXT_LIMIT, SLACK_SECTION_TEXT_LIMIT
 
 
 class FakeSlackReplies:
@@ -57,6 +57,18 @@ class FailingProgressUpdateSlack(FakeSlackReplies):
     def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
         if text in {"Innie is working", "working", "first", "second"}:
             raise RuntimeError("chat.update failed: rate_limited")
+        super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
+
+
+class LengthLimitedSlack(FakeSlackReplies):
+    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+        if len(text) > SLACK_SECTION_TEXT_LIMIT:
+            raise RuntimeError("chat.postMessage failed: msg_too_long")
+        return super().post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
+
+    def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
+        if len(text) > SLACK_SECTION_TEXT_LIMIT:
+            raise RuntimeError("chat.update failed: msg_too_long")
         super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
 
 
@@ -658,9 +670,46 @@ class RuntimeTest(unittest.TestCase):
                 manager.close()
 
             self.assertEqual("completed", task_status)
-            self.assertIn(("D1", "100.1", "final answer"), slack.messages)
-            self.assertIn(("D1", "900.1"), slack.deletes)
+            self.assertIn(("D1", "900.1", "final answer"), slack.updates)
+            self.assertEqual([], slack.deletes)
             self.assertIn("slack progress update failed", "\n".join(terminal))
+
+    def test_manager_keeps_large_tool_result_progress_update_under_slack_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("Ev1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = LengthLimitedSlack()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="working"),
+                    HarnessEvent(type="tool_result", message="search result\n" + ("x" * 6000)),
+                    HarnessEvent(type="output", message="final answer"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(path, adapters={"scripted": adapter}, slack=slack, workspace=Path(tmp))
+            try:
+                asyncio.run(manager.run_until_idle())
+                failures = [
+                    row["event_type"]
+                    for row in manager.db.execute(
+                        "SELECT event_type FROM task_events WHERE event_type = 'worker.slack_delivery_failed'"
+                    )
+                ]
+            finally:
+                manager.close()
+
+            self.assertEqual([], failures)
+            self.assertLessEqual(len(slack.updates[0][2]), SLACK_SECTION_TEXT_LIMIT)
+            self.assertEqual("plan", slack.update_blocks[0][0]["type"])
 
     def test_manager_marks_task_failed_and_replaces_progress_when_adapter_crashes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

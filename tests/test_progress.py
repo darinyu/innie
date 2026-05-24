@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from innie.harness import HarnessEvent, TokenUsage
-from innie.progress import SLACK_FINAL_TEXT_LIMIT, SlackProgressRenderer
+from innie.progress import SLACK_FINAL_TEXT_LIMIT, SLACK_SECTION_TEXT_LIMIT, SlackProgressRenderer
 
 
 class SlackProgressRendererTest(unittest.TestCase):
@@ -123,6 +123,19 @@ class SlackProgressRendererTest(unittest.TestCase):
         renderer = SlackProgressRenderer()
 
         self.assertIsNone(renderer.render("task_1", HarnessEvent(type="tool_result", payload={"private": "raw"})))
+
+    def test_truncates_large_tool_result_progress_fallback_text(self) -> None:
+        renderer = SlackProgressRenderer()
+
+        widget = renderer.render_widget(
+            "task_1",
+            HarnessEvent(type="tool_result", message="search result\n" + ("x" * 6000)),
+        )
+
+        self.assertIsNotNone(widget)
+        self.assertLessEqual(len(widget.text), SLACK_SECTION_TEXT_LIMIT)
+        self.assertIn("omitted", widget.text)
+        self.assertEqual("plan", widget.blocks[0]["type"])
 
     def test_thinking_progress_is_not_saved_as_final_detail(self) -> None:
         renderer = SlackProgressRenderer()

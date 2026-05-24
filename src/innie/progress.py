@@ -52,13 +52,13 @@ class SlackProgressRenderer:
             text = "Innie is working"
             return SlackRenderedMessage(text=text, blocks=_progress_blocks("Innie is working", "Working"))
         if event.type == "tool_use" and event.message:
-            text = self._format_tool_use(event)
+            text = _truncate_progress_text(self._format_tool_use(event))
             title = f"Innie is {_tool_verb(str(event.payload.get('tool_name') or event.payload.get('tool') or 'tool'))}"
-            detail = self._formatter.format(event.message)
+            detail = _truncate_progress_text(self._formatter.format(event.message))
             return SlackRenderedMessage(text=text, blocks=_progress_blocks(title, detail))
         if event.type == "tool_result" and event.message:
-            text = self._formatter.format(f"Tool result:\n{event.message}")
-            detail = self._formatter.format(event.message)
+            text = _truncate_progress_text(self._formatter.format(f"Tool result:\n{event.message}"))
+            detail = _truncate_progress_text(self._formatter.format(event.message))
             return SlackRenderedMessage(text=text, blocks=_progress_blocks("Innie received tool output", detail))
         if event.type == "output" and event.message:
             return SlackRenderedMessage(text=self._formatter.format(event.message))
@@ -279,6 +279,13 @@ def _progress_details_text(progress_details: list[str], *, limit: int = SLACK_SE
     omitted = "\n... earlier progress omitted ...\n"
     tail_limit = limit - len(omitted)
     return omitted + text[-tail_limit:]
+
+
+def _truncate_progress_text(text: str, *, limit: int = SLACK_SECTION_TEXT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    omitted = "\n... progress text omitted ...\n"
+    return text[: limit - len(omitted)] + omitted
 
 
 def _chunk_text(text: str, *, limit: int = SLACK_SECTION_TEXT_LIMIT) -> list[str]:
