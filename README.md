@@ -10,19 +10,17 @@
 
 > Innie is an early prototype. The repo contains local setup, guided Slack
 > setup, durable state, hooks, session inspection, the local dashboard, and
-> Codex, Claude Code, and echo adapter paths. It is suitable for local
-> experimentation, not production use.
+> Codex and Claude Code adapter paths.
 
 ![Innie Slack-to-agent workflow](assets/demo/innie-flow.gif)
 
 ## What Is Innie?
 
 Innie is the thinnest customizable layer between Slack and agent harnesses. The
-current repo supports Codex CLI, Claude Code, and a diagnostic echo adapter;
-OpenCode, Goose, and custom runtimes are future adapter targets. You run Innie in
-your own dev environment, local or cloud. It keeps Slack-triggered work durable,
-visible, resumable where the harness supports it, and observable while the
-selected harness does the actual agent work.
+current repo supports Codex CLI and Claude Code; custom runtimes are future
+adapter targets. You run Innie in your own dev environment, local or cloud. It
+keeps Slack-triggered work durable, visible, resumable where the harness supports
+it, and observable while the selected harness does the actual agent work.
 
 The human is the **Outie**: the person who asks from Slack, follows progress,
 and receives the result.
@@ -33,14 +31,14 @@ operating envelope around them:
 
 - **Slack in, Slack out**: trigger work from Slack and get replies back in the
   thread.
-- **Harness adapter boundary**: keep Codex CLI, Claude Code, echo, and future
+- **Harness adapter boundary**: keep Codex CLI, Claude Code, and future
   runtimes behind adapters.
 - **Your environment, your access**: run the harness where your repos, CLIs,
   MCP servers, credentials, and local tools already work.
 - **Durable by default**: persist sessions, queued follow-ups, progress events,
   harness resume ids, hooks, artifacts, and observability data.
 
-Innie is not a new agent loop, policy engine, model runtime, or semantic memory
+Innie is *NOT* a new agent loop, policy engine, model runtime, or semantic memory
 system. It is the minimum product shell that can make a harness feel like a
 dependable worker.
 
