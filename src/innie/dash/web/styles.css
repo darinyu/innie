@@ -193,6 +193,28 @@ button {
   background: var(--surface);
   border-radius: 6px;
   padding: 9px 10px;
+  text-align: left;
+}
+
+.metric-button {
+  width: 100%;
+  cursor: pointer;
+}
+
+.metric-button:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.metric-button:focus-visible {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+  outline: 0;
+}
+
+.metric-button.active {
+  border-color: #93c5fd;
+  background: var(--accent-soft);
 }
 
 .metric-label {
