@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import redirect_stdout
 from io import StringIO
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -31,6 +32,29 @@ class InstallScriptTest(unittest.TestCase):
 
             self.assertIn("Installed innie command", out.getvalue())
             self.assertIn("init", result.stdout)
+
+    def test_install_script_defaults_to_active_environment_bin_on_path(self) -> None:
+        for env_var in ("VIRTUAL_ENV", "CONDA_PREFIX"):
+            with self.subTest(env_var=env_var):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    env_dir = root / "env"
+                    bin_dir = env_dir / ("Scripts" if os.name == "nt" else "bin")
+                    bin_dir.mkdir(parents=True)
+                    home = root / "home"
+                    out = StringIO()
+                    with mock.patch("scripts.install.importlib.util.find_spec", return_value=object()):
+                        with mock.patch.dict(
+                            "scripts.install.os.environ",
+                            {env_var: str(env_dir), "PATH": str(bin_dir)},
+                            clear=True,
+                        ):
+                            with mock.patch("scripts.install.Path.home", return_value=home):
+                                with redirect_stdout(out):
+                                    self.assertEqual(0, main([]))
+
+                    self.assertTrue((bin_dir / "innie").exists())
+                    self.assertIn(f"Installed innie command: {bin_dir / 'innie'}", out.getvalue())
 
     def test_install_script_defaults_to_installing_rich(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

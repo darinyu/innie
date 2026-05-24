@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--bin-dir",
         type=Path,
-        default=Path.home() / ".local" / "bin",
+        default=None,
         help="Directory where the innie command should be written",
     )
     parser.add_argument(
@@ -35,16 +35,30 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = Path(__file__).resolve().parents[1]
     src_dir = repo_root / "src"
-    target = args.bin_dir / "innie"
-    args.bin_dir.mkdir(parents=True, exist_ok=True)
+    bin_dir = args.bin_dir or _default_bin_dir()
+    target = bin_dir / "innie"
+    bin_dir.mkdir(parents=True, exist_ok=True)
     target.write_text(_launcher(src_dir), encoding="utf-8")
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     print(f"Installed innie command: {target}")
-    if str(args.bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
-        print(f"Add this directory to PATH if needed: {args.bin_dir}")
+    if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        print(f"Add this directory to PATH if needed: {bin_dir}")
     print("Start with: innie init")
     return 0
+
+
+def _default_bin_dir() -> Path:
+    path_entries = os.environ.get("PATH", "").split(os.pathsep)
+    for env_var in ("VIRTUAL_ENV", "CONDA_PREFIX"):
+        env_root = os.environ.get(env_var)
+        if not env_root:
+            continue
+        env_bin = Path(env_root) / ("Scripts" if os.name == "nt" else "bin")
+        if str(env_bin) in path_entries:
+            return env_bin
+
+    return Path.home() / ".local" / "bin"
 
 
 def _ensure_runtime_dependencies() -> None:
