@@ -46,6 +46,19 @@ class BootstrapTest(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertFalse((workspace / ".innie").exists())
 
+    def test_init_allows_missing_slack_config_on_first_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch("innie.bootstrap.shutil.which", return_value="/usr/local/bin/codex"):
+                result = init_workspace(
+                    workspace,
+                    input_fn=lambda _prompt: self.fail("missing Slack config should not block init"),
+                )
+
+            self.assertTrue(result.ok)
+            self.assertTrue((workspace / ".innie" / "innie.db").exists())
+            self.assertIn("slack_config: missing", "\n".join(result.messages))
+
     def test_missing_harness_message_names_supported_opt_in_harnesses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)

@@ -98,7 +98,11 @@ def init_workspace(
         messages.append("Missing required dependencies. Innie did not create local state.")
         return InitResult(ok=False, messages=messages)
 
-    missing_optional = [status for status in statuses if not status.required and not status.ok]
+    missing_optional = [
+        status
+        for status in statuses
+        if not status.required and not status.ok and status.name != "slack_config"
+    ]
     if missing_optional:
         messages.append("Optional setup is incomplete. Innie will not install or change tools without approval.")
         if not assume_yes:

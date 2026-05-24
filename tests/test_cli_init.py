@@ -36,6 +36,26 @@ class CliInitTest(unittest.TestCase):
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
             self.assertIn("slack setup started", out.getvalue())
 
+    def test_init_missing_slack_config_prompts_for_slack_setup_not_local_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            out = StringIO()
+            with mock.patch(
+                "innie.cli.run_slack_setup",
+                return_value=FakeSlackResult(True, ["slack setup started"]),
+            ) as slack_setup:
+                with mock.patch("innie.bootstrap.shutil.which", return_value="/usr/local/bin/codex"):
+                    with mock.patch("builtins.input", return_value="") as input_mock:
+                        with redirect_stdout(out):
+                            result = main(["--state-dir", str(workspace), "init"])
+
+            self.assertEqual(0, result)
+            slack_setup.assert_called_once()
+            input_mock.assert_called_once_with("Set up Slack now? [Y/n] ")
+            self.assertTrue((workspace / ".innie" / "innie.db").exists())
+            self.assertIn("slack_config: missing", out.getvalue())
+            self.assertNotIn("Canceled before creating local state", out.getvalue())
+
     def test_init_can_skip_slack_setup_for_local_state_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
