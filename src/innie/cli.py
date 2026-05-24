@@ -53,6 +53,22 @@ def build_parser() -> argparse.ArgumentParser:
     slack_subparsers = slack_parser.add_subparsers(dest="slack_command", required=True)
     slack_subparsers.add_parser("setup", help="Run the Slack app setup wizard")
 
+    dash_parser = subparsers.add_parser("dash", help="Run the local Innie dashboard")
+    dash_parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
+    dash_parser.add_argument("--port", type=int, default=8765, help="Port to bind")
+    dash_parser.add_argument(
+        "--web-dir",
+        type=Path,
+        default=None,
+        help="Override dashboard static asset directory; mostly useful for development",
+    )
+    dash_parser.add_argument(
+        "dash_command",
+        nargs="?",
+        choices=("server",),
+        help=argparse.SUPPRESS,
+    )
+
     status_parser = subparsers.add_parser("status", help="Show a durable session summary")
     status_parser.add_argument("session_id")
 
@@ -115,6 +131,15 @@ def main(argv: list[str] | None = None) -> int:
         for line in result.messages:
             print(line)
         return 0 if result.ok else 1
+
+    if args.command == "dash":
+        from .dash.server import create_server
+
+        server = create_server(args.host, args.port, state_dir, web_dir=args.web_dir)
+        print(f"Innie Dash listening on http://{args.host}:{args.port}")
+        print(f"workspace: {server.workspace}")
+        server.serve_forever()
+        return 0
 
     if args.command == "status":
         with _open_workspace_db(state_dir) as db:
