@@ -77,21 +77,13 @@ def stage_slack_files_for_trigger(
         else:
             destination = _unique_destination(event_dir, name, used_paths)
             used_paths.add(destination)
-            errors: list[str] = []
-            for candidate_url in urls:
-                result = file_client.download_file(candidate_url, destination)
-                if result.error:
-                    if destination.exists():
-                        destination.unlink()
-                    if result.error not in errors:
-                        errors.append(result.error)
-                    continue
+            result = _download_first_available_url(file_client, urls, destination)
+            if result.error:
+                error = result.error
+            else:
                 byte_count = result.byte_count
                 local_path = str(destination)
                 status = "staged"
-                break
-            if status != "staged":
-                error = "; ".join(errors) if errors else "download_failed"
 
         db.execute(
             """
@@ -235,6 +227,23 @@ def _safe_filename(name: str) -> str:
     base = Path(name).name.strip() or "file"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("._")
     return safe or "file"
+
+
+def _download_first_available_url(
+    file_client: SlackFileClient,
+    urls: list[str],
+    destination: Path,
+) -> SlackFileDownloadResult:
+    errors: list[str] = []
+    for url in urls:
+        result = file_client.download_file(url, destination)
+        if not result.error:
+            return result
+        if destination.exists():
+            destination.unlink()
+        if result.error not in errors:
+            errors.append(result.error)
+    return SlackFileDownloadResult(error="; ".join(errors) if errors else "download_failed")
 
 
 def _download_urls(file_info: dict[str, Any]) -> list[str]:

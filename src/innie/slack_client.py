@@ -4,13 +4,18 @@ import json
 from pathlib import Path
 import re
 from typing import Any
-from urllib import request
+from urllib import error, request
 
 from .slack_files import SlackFileDownloadResult
 
 
 class SlackApiError(RuntimeError):
     pass
+
+
+DOWNLOAD_TIMEOUT_SECONDS = 60
+API_TIMEOUT_SECONDS = 30
+SLACK_LOGIN_SAMPLE_BYTES = 128 * 1024
 
 
 class SlackWebClient:
@@ -55,9 +60,9 @@ class SlackWebClient:
         req = request.Request(url)
         req.add_header("Authorization", f"Bearer {self._token}")
         try:
-            with request.urlopen(req, timeout=60) as resp:
+            with request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp:
                 data = resp.read()
-        except Exception as exc:
+        except (TimeoutError, OSError, error.URLError) as exc:
             return SlackFileDownloadResult(error=str(exc) or exc.__class__.__name__)
         if _looks_like_slack_login_redirect(data):
             return SlackFileDownloadResult(error=self._diagnose_file_download_redirect(url))
@@ -75,7 +80,7 @@ class SlackWebClient:
         req = request.Request(f"https://slack.com/api/{method}", data=data)
         req.add_header("Authorization", f"Bearer {self._token}")
         req.add_header("Content-Type", "application/json; charset=utf-8")
-        with request.urlopen(req, timeout=30) as resp:
+        with request.urlopen(req, timeout=API_TIMEOUT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def _diagnose_file_download_redirect(self, url: str) -> str:
@@ -84,7 +89,7 @@ class SlackWebClient:
             return "slack_login_redirect"
         try:
             result = self._post_json_result("files.info", {"file": file_id})
-        except Exception:
+        except (TimeoutError, OSError, error.URLError, json.JSONDecodeError, UnicodeDecodeError):
             return "slack_login_redirect"
         if result.get("ok"):
             return "slack_login_redirect"
@@ -96,7 +101,7 @@ class SlackWebClient:
 
 
 def _looks_like_slack_login_redirect(data: bytes) -> bool:
-    sample = data[:131072].lower()
+    sample = data[:SLACK_LOGIN_SAMPLE_BYTES].lower()
     has_files_redirect = b"/files-pri/" in sample or b"\\/files-pri\\/" in sample or b"%2ffiles-pri" in sample
     return (
         b"<title>slack</title>" in sample

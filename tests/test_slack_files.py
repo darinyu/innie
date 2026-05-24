@@ -15,15 +15,14 @@ from innie.slack_files import (
 
 
 class FakeFileClient:
-    def __init__(self, *, failures: dict[str, Exception] | None = None) -> None:
-        self.failures = failures or {}
+    def __init__(self, *, errors: dict[str, str] | None = None) -> None:
+        self.errors = errors or {}
         self.downloads: list[tuple[str, Path]] = []
 
     def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         self.downloads.append((url, destination))
-        if url in self.failures:
-            exc = self.failures[url]
-            return SlackFileDownloadResult(error=str(exc) or exc.__class__.__name__)
+        if url in self.errors:
+            return SlackFileDownloadResult(error=self.errors[url])
         destination.write_bytes(f"contents for {url}".encode("utf-8"))
         return SlackFileDownloadResult(byte_count=destination.stat().st_size)
 
@@ -68,6 +67,19 @@ def trigger_with_files(event_id: str = "EvFile") -> SlackTrigger:
     )
 
 
+def trigger_with_single_file(file_info: dict[str, object], *, event_id: str = "EvSnippet") -> SlackTrigger:
+    return SlackTrigger(
+        event_id=event_id,
+        trigger_type="dm",
+        channel_id="D1",
+        message_ts="100.1",
+        thread_ts=None,
+        sender_user_id="U1",
+        text="read this",
+        payload={"event_id": event_id, "event": {"files": [file_info]}},
+    )
+
+
 def seed_session(db) -> None:
     db.execute(
         """
@@ -85,7 +97,7 @@ class SlackFilesTest(unittest.TestCase):
             initialize_schema(db)
             seed_session(db)
             trigger = trigger_with_files()
-            client = FakeFileClient(failures={"https://files.example/F3": RuntimeError("not_allowed")})
+            client = FakeFileClient(errors={"https://files.example/F3": "not_allowed"})
 
             records = stage_slack_files_for_trigger(
                 db,
@@ -120,7 +132,7 @@ class SlackFilesTest(unittest.TestCase):
                 workspace=workspace,
                 session_id="sess_1",
                 trigger=trigger,
-                file_client=FakeFileClient(failures={"https://files.example/F3": RuntimeError("not_allowed")}),
+                file_client=FakeFileClient(errors={"https://files.example/F3": "not_allowed"}),
             )
 
             records = list_files_for_inbox(db, session_id="sess_1", slack_event_id="EvFile")
@@ -153,35 +165,21 @@ class SlackFilesTest(unittest.TestCase):
             db = connect(workspace / "innie.db")
             initialize_schema(db)
             seed_session(db)
-            trigger = SlackTrigger(
-                event_id="EvSnippet",
-                trigger_type="dm",
-                channel_id="D1",
-                message_ts="100.1",
-                thread_ts=None,
-                sender_user_id="U1",
-                text="read this",
-                payload={
-                    "event_id": "EvSnippet",
-                    "event": {
-                        "files": [
-                            {
-                                "id": "F1",
-                                "name": "test_codex.txt",
-                                "mimetype": "text/plain",
-                                "filetype": "text",
-                                "mode": "snippet",
-                                "preview": "helloworld\n",
-                                "preview_is_truncated": False,
-                                "url_private_download": "https://files.example/F1",
-                                "url_private": "https://files.example/F1-private",
-                            },
-                        ]
-                    },
-                },
+            trigger = trigger_with_single_file(
+                {
+                    "id": "F1",
+                    "name": "test_codex.txt",
+                    "mimetype": "text/plain",
+                    "filetype": "text",
+                    "mode": "snippet",
+                    "preview": "helloworld\n",
+                    "preview_is_truncated": False,
+                    "url_private_download": "https://files.example/F1",
+                    "url_private": "https://files.example/F1-private",
+                }
             )
 
-            client = FakeFileClient(failures={"https://files.example/F1": RuntimeError("slack_login_redirect")})
+            client = FakeFileClient(errors={"https://files.example/F1": "slack_login_redirect"})
 
             records = stage_slack_files_for_trigger(
                 db,
@@ -211,34 +209,20 @@ class SlackFilesTest(unittest.TestCase):
             db = connect(workspace / "innie.db")
             initialize_schema(db)
             seed_session(db)
-            trigger = SlackTrigger(
-                event_id="EvSnippet",
-                trigger_type="dm",
-                channel_id="D1",
-                message_ts="100.1",
-                thread_ts=None,
-                sender_user_id="U1",
-                text="read this",
-                payload={
-                    "event_id": "EvSnippet",
-                    "event": {
-                        "files": [
-                            {
-                                "id": "F1",
-                                "name": "test_codex.txt",
-                                "mimetype": "text/plain",
-                                "filetype": "text",
-                                "url_private_download": "https://files.example/F1",
-                                "url_private": "https://files.example/F1-private",
-                            },
-                        ]
-                    },
-                },
+            trigger = trigger_with_single_file(
+                {
+                    "id": "F1",
+                    "name": "test_codex.txt",
+                    "mimetype": "text/plain",
+                    "filetype": "text",
+                    "url_private_download": "https://files.example/F1",
+                    "url_private": "https://files.example/F1-private",
+                }
             )
             client = FakeFileClient(
-                failures={
-                    "https://files.example/F1": RuntimeError("missing_scope: files:read"),
-                    "https://files.example/F1-private": RuntimeError("missing_scope: files:read"),
+                errors={
+                    "https://files.example/F1": "missing_scope: files:read",
+                    "https://files.example/F1-private": "missing_scope: files:read",
                 }
             )
 
