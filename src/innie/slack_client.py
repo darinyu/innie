@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
-from urllib import request
+from urllib import error, request
+
+from .slack_files import SlackFileDownloadResult
 
 
 class SlackApiError(RuntimeError):
     pass
+
+
+DOWNLOAD_TIMEOUT_SECONDS = 60
+API_TIMEOUT_SECONDS = 30
+SLACK_LOGIN_SAMPLE_BYTES = 128 * 1024
 
 
 class SlackWebClient:
@@ -47,22 +55,62 @@ class SlackWebClient:
     def delete_message(self, *, channel: str, ts: str) -> None:
         self._post_json("chat.delete", {"channel": channel, "ts": ts})
 
-    def download_file(self, url: str, destination: Path) -> int:
+    def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         destination.parent.mkdir(parents=True, exist_ok=True)
         req = request.Request(url)
         req.add_header("Authorization", f"Bearer {self._token}")
-        with request.urlopen(req, timeout=60) as resp:
-            data = resp.read()
+        try:
+            with request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp:
+                data = resp.read()
+        except (TimeoutError, OSError, error.URLError) as exc:
+            return SlackFileDownloadResult(error=str(exc) or exc.__class__.__name__)
+        if _looks_like_slack_login_redirect(data):
+            return SlackFileDownloadResult(error=self._diagnose_file_download_redirect(url))
         destination.write_bytes(data)
-        return len(data)
+        return SlackFileDownloadResult(byte_count=len(data))
 
     def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        result = self._post_json_result(method, payload)
+        if not result.get("ok"):
+            raise SlackApiError(f"{method} failed: {result.get('error', 'unknown_error')}")
+        return result
+
+    def _post_json_result(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(f"https://slack.com/api/{method}", data=data)
         req.add_header("Authorization", f"Bearer {self._token}")
         req.add_header("Content-Type", "application/json; charset=utf-8")
-        with request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        if not result.get("ok"):
-            raise SlackApiError(f"{method} failed: {result.get('error', 'unknown_error')}")
-        return result
+        with request.urlopen(req, timeout=API_TIMEOUT_SECONDS) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _diagnose_file_download_redirect(self, url: str) -> str:
+        file_id = _file_id_from_slack_file_url(url)
+        if file_id is None:
+            return "slack_login_redirect"
+        try:
+            result = self._post_json_result("files.info", {"file": file_id})
+        except (TimeoutError, OSError, error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+            return "slack_login_redirect"
+        if result.get("ok"):
+            return "slack_login_redirect"
+        error = str(result.get("error") or "unknown_error")
+        if error == "missing_scope":
+            needed = str(result.get("needed") or "files:read")
+            return f"missing_scope: {needed}"
+        return f"files.info failed: {error}"
+
+
+def _looks_like_slack_login_redirect(data: bytes) -> bool:
+    sample = data[:SLACK_LOGIN_SAMPLE_BYTES].lower()
+    has_files_redirect = b"/files-pri/" in sample or b"\\/files-pri\\/" in sample or b"%2ffiles-pri" in sample
+    return (
+        b"<title>slack</title>" in sample
+        and b"redirecturl" in sample
+        and has_files_redirect
+        and b"loggedinteams" in sample
+    )
+
+
+def _file_id_from_slack_file_url(url: str) -> str | None:
+    match = re.search(r"/files-pri/[^/]*-([A-Z0-9]+)(?:/|$)", url)
+    return match.group(1) if match else None

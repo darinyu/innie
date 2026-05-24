@@ -7,6 +7,7 @@ import unittest
 from innie.db import connect, initialize_schema
 from innie.slack_events import SlackTrigger
 from innie.slack_files import (
+    SlackFileDownloadResult,
     format_file_prompt_sections,
     list_files_for_inbox,
     stage_slack_files_for_trigger,
@@ -14,16 +15,16 @@ from innie.slack_files import (
 
 
 class FakeFileClient:
-    def __init__(self, *, failures: dict[str, Exception] | None = None) -> None:
-        self.failures = failures or {}
+    def __init__(self, *, errors: dict[str, str] | None = None) -> None:
+        self.errors = errors or {}
         self.downloads: list[tuple[str, Path]] = []
 
-    def download_file(self, url: str, destination: Path) -> int:
+    def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         self.downloads.append((url, destination))
-        if url in self.failures:
-            raise self.failures[url]
+        if url in self.errors:
+            return SlackFileDownloadResult(error=self.errors[url])
         destination.write_bytes(f"contents for {url}".encode("utf-8"))
-        return destination.stat().st_size
+        return SlackFileDownloadResult(byte_count=destination.stat().st_size)
 
 
 def trigger_with_files(event_id: str = "EvFile") -> SlackTrigger:
@@ -66,6 +67,19 @@ def trigger_with_files(event_id: str = "EvFile") -> SlackTrigger:
     )
 
 
+def trigger_with_single_file(file_info: dict[str, object], *, event_id: str = "EvSnippet") -> SlackTrigger:
+    return SlackTrigger(
+        event_id=event_id,
+        trigger_type="dm",
+        channel_id="D1",
+        message_ts="100.1",
+        thread_ts=None,
+        sender_user_id="U1",
+        text="read this",
+        payload={"event_id": event_id, "event": {"files": [file_info]}},
+    )
+
+
 def seed_session(db) -> None:
     db.execute(
         """
@@ -83,7 +97,7 @@ class SlackFilesTest(unittest.TestCase):
             initialize_schema(db)
             seed_session(db)
             trigger = trigger_with_files()
-            client = FakeFileClient(failures={"https://files.example/F3": RuntimeError("not_allowed")})
+            client = FakeFileClient(errors={"https://files.example/F3": "not_allowed"})
 
             records = stage_slack_files_for_trigger(
                 db,
@@ -118,7 +132,7 @@ class SlackFilesTest(unittest.TestCase):
                 workspace=workspace,
                 session_id="sess_1",
                 trigger=trigger,
-                file_client=FakeFileClient(failures={"https://files.example/F3": RuntimeError("not_allowed")}),
+                file_client=FakeFileClient(errors={"https://files.example/F3": "not_allowed"}),
             )
 
             records = list_files_for_inbox(db, session_id="sess_1", slack_event_id="EvFile")
@@ -144,6 +158,84 @@ class SlackFilesTest(unittest.TestCase):
 
             self.assertEqual(3, db.execute("SELECT COUNT(*) AS count FROM slack_files").fetchone()["count"])
             self.assertEqual(3, len(client.downloads))
+
+    def test_stage_slack_files_downloads_text_snippet_without_using_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            db = connect(workspace / "innie.db")
+            initialize_schema(db)
+            seed_session(db)
+            trigger = trigger_with_single_file(
+                {
+                    "id": "F1",
+                    "name": "test_codex.txt",
+                    "mimetype": "text/plain",
+                    "filetype": "text",
+                    "mode": "snippet",
+                    "preview": "helloworld\n",
+                    "preview_is_truncated": False,
+                    "url_private_download": "https://files.example/F1",
+                    "url_private": "https://files.example/F1-private",
+                }
+            )
+
+            client = FakeFileClient(errors={"https://files.example/F1": "slack_login_redirect"})
+
+            records = stage_slack_files_for_trigger(
+                db,
+                workspace=workspace,
+                session_id="sess_1",
+                trigger=trigger,
+                file_client=client,
+            )
+
+            self.assertEqual(["staged"], [record.status for record in records])
+            self.assertEqual("contents for https://files.example/F1-private", Path(records[0].local_path).read_text())
+            self.assertEqual(len("contents for https://files.example/F1-private".encode("utf-8")), records[0].byte_count)
+            self.assertEqual(
+                [
+                    ("https://files.example/F1", workspace / ".innie" / "files" / "sess_1" / "EvSnippet" / "test_codex.txt"),
+                    (
+                        "https://files.example/F1-private",
+                        workspace / ".innie" / "files" / "sess_1" / "EvSnippet" / "test_codex.txt",
+                    ),
+                ],
+                client.downloads,
+            )
+
+    def test_stage_slack_files_deduplicates_repeated_download_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            db = connect(workspace / "innie.db")
+            initialize_schema(db)
+            seed_session(db)
+            trigger = trigger_with_single_file(
+                {
+                    "id": "F1",
+                    "name": "test_codex.txt",
+                    "mimetype": "text/plain",
+                    "filetype": "text",
+                    "url_private_download": "https://files.example/F1",
+                    "url_private": "https://files.example/F1-private",
+                }
+            )
+            client = FakeFileClient(
+                errors={
+                    "https://files.example/F1": "missing_scope: files:read",
+                    "https://files.example/F1-private": "missing_scope: files:read",
+                }
+            )
+
+            records = stage_slack_files_for_trigger(
+                db,
+                workspace=workspace,
+                session_id="sess_1",
+                trigger=trigger,
+                file_client=client,
+            )
+
+            self.assertEqual("failed", records[0].status)
+            self.assertEqual("missing_scope: files:read", records[0].error)
 
 
 if __name__ == "__main__":

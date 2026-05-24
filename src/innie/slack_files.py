@@ -25,8 +25,14 @@ class SlackFileRecord:
     error: str | None
 
 
+@dataclass(frozen=True)
+class SlackFileDownloadResult:
+    byte_count: int = 0
+    error: str | None = None
+
+
 class SlackFileClient(Protocol):
-    def download_file(self, url: str, destination: Path) -> int:
+    def download_file(self, url: str, destination: Path) -> SlackFileDownloadResult:
         ...
 
 
@@ -59,25 +65,25 @@ def stage_slack_files_for_trigger(
         name = str(file_info.get("name") or file_info.get("title") or slack_file_id)
         mimetype = _optional_str(file_info.get("mimetype"))
         filetype = _optional_str(file_info.get("filetype"))
-        url = _optional_str(file_info.get("url_private_download") or file_info.get("url_private"))
+        urls = _download_urls(file_info)
+        url = urls[0] if urls else None
         local_path: str | None = None
         byte_count = 0
         status = "failed"
         error: str | None = None
 
-        if not url:
+        if not urls:
             error = "missing_download_url"
         else:
             destination = _unique_destination(event_dir, name, used_paths)
             used_paths.add(destination)
-            try:
-                byte_count = int(file_client.download_file(url, destination))
+            result = _download_first_available_url(file_client, urls, destination)
+            if result.error:
+                error = result.error
+            else:
+                byte_count = result.byte_count
                 local_path = str(destination)
                 status = "staged"
-            except Exception as exc:
-                error = str(exc) or exc.__class__.__name__
-                if destination.exists():
-                    destination.unlink()
 
         db.execute(
             """
@@ -221,6 +227,32 @@ def _safe_filename(name: str) -> str:
     base = Path(name).name.strip() or "file"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("._")
     return safe or "file"
+
+
+def _download_first_available_url(
+    file_client: SlackFileClient,
+    urls: list[str],
+    destination: Path,
+) -> SlackFileDownloadResult:
+    errors: list[str] = []
+    for url in urls:
+        result = file_client.download_file(url, destination)
+        if not result.error:
+            return result
+        if destination.exists():
+            destination.unlink()
+        if result.error not in errors:
+            errors.append(result.error)
+    return SlackFileDownloadResult(error="; ".join(errors) if errors else "download_failed")
+
+
+def _download_urls(file_info: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for value in (file_info.get("url_private_download"), file_info.get("url_private")):
+        url = _optional_str(value)
+        if url is not None and url not in urls:
+            urls.append(url)
+    return urls
 
 
 def _optional_str(value: Any) -> str | None:
