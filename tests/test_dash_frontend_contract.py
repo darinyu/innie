@@ -27,6 +27,27 @@ class FrontendContractTest(unittest.TestCase):
         self.assertNotIn("log-explainer", source)
         self.assertNotIn("log-advice", source)
 
+    def test_session_logs_group_progress_into_folded_sections(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("function groupSessionLogItems(items)", source)
+        self.assertIn('item.event_type === "harness.progress"', source)
+        self.assertIn("groups.reverse()", source)
+        self.assertIn('class="phase-card', source)
+        self.assertIn("isLogSectionExpanded(group.id)", source)
+        self.assertIn("expandedLogSections: new Set()", source)
+        self.assertIn("data-log-section", source)
+
+    def test_session_log_entries_truncate_and_expand_independently(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("function logEntryCard(item)", source)
+        self.assertIn("isLogEntryExpanded(item.id)", source)
+        self.assertIn("expandedLogEntries: new Set()", source)
+        self.assertIn("data-log-entry", source)
+        self.assertIn("entry-text", source)
+        self.assertIn("expanded-payload", source)
+
     def test_selected_session_refreshes_every_second_without_live_toggle(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
 

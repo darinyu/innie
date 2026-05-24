@@ -11,6 +11,8 @@ const state = {
   health: null,
   filters: { status: "all", harness: "all", search: "" },
   tab: "logs",
+  expandedLogSections: new Set(),
+  expandedLogEntries: new Set(),
   freshness: null,
   shellTimer: null,
   sessionTimer: null,
@@ -84,7 +86,12 @@ function currentRoute() {
 
 function syncRouteSelection() {
   const route = currentRoute();
-  state.selectedSessionId = route.name === "runs" ? route.sessionId : null;
+  const nextSessionId = route.name === "runs" ? route.sessionId : null;
+  if (state.selectedSessionId !== nextSessionId) {
+    state.expandedLogSections.clear();
+    state.expandedLogEntries.clear();
+  }
+  state.selectedSessionId = nextSessionId;
   state.sessionDetail = state.selectedSessionId ? state.sessionDetailCache.get(state.selectedSessionId) || null : null;
   state.sessionDetailLoading = false;
 }
@@ -309,14 +316,135 @@ function recordsTab(detail) {
 }
 
 function logsView(detail) {
-  const items = [
-    ...detail.inbox.map((row) => ({ created_at: row.created_at, event_type: `inbox.${row.status}`, payload: row })),
-    ...detail.task_events,
-    ...detail.hook_events.map((row) => ({ created_at: row.created_at, event_type: `hook.${row.hook_name}.${row.status}`, payload: row })),
-  ].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const items = sessionLogItems(detail);
+  const groups = groupSessionLogItems(items);
   return `
-    <div class="timeline">${items.map(eventCard).join("") || `<div class="empty">No log events.</div>`}</div>
+    <div class="timeline">${groups.map(logSectionCard).join("") || `<div class="empty">No log events.</div>`}</div>
   `;
+}
+
+function sessionLogItems(detail) {
+  return [
+    ...detail.inbox.map((row) => normalizeLogItem(row, `inbox.${row.status}`, "inbox")),
+    ...detail.task_events.map((row) => normalizeLogItem(row, row.event_type, "event")),
+    ...detail.hook_events.map((row) => normalizeLogItem(row, `hook.${row.hook_name}.${row.status}`, "hook")),
+  ].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+}
+
+function normalizeLogItem(row, eventType, source) {
+  const payload = row.payload || safeJson(row.payload_json) || row;
+  const itemId = `${source}:${row.id ?? row.created_at}:${eventType}`;
+  return {
+    ...row,
+    id: itemId,
+    source,
+    event_type: eventType,
+    payload,
+    message: logMessage(payload, eventType),
+  };
+}
+
+function groupSessionLogItems(items) {
+  const chronological = [...items].sort(
+    (a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)),
+  );
+  const groups = [];
+  let current = null;
+
+  chronological.forEach((item) => {
+    if (item.event_type === "harness.progress") {
+      if (current) groups.push(current);
+      current = createProgressGroup(item);
+      return;
+    }
+    if (!current) current = createActivityGroup(item);
+    current.items.push(item);
+    current.updated_at = maxTimestamp(current.updated_at, item.created_at);
+  });
+
+  if (current) groups.push(current);
+  groups.forEach((group, index) => {
+    group.step = group.progress ? index + 1 : null;
+    group.items.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  });
+  return groups.reverse();
+}
+
+function createProgressGroup(item) {
+  const summary = item.message || "Progress update";
+  return {
+    id: item.id,
+    title: summary,
+    summary,
+    started_at: item.created_at,
+    updated_at: item.created_at,
+    progress: item,
+    items: [],
+  };
+}
+
+function createActivityGroup(item) {
+  return {
+    id: `activity:${item.id}`,
+    title: "Session activity",
+    summary: "Events before the first progress update.",
+    started_at: item.created_at,
+    updated_at: item.created_at,
+    progress: null,
+    items: [],
+  };
+}
+
+function logSectionCard(group) {
+  const count = group.items.length + (group.progress ? 1 : 0);
+  const title = group.step ? `Step ${group.step}: ${group.title}` : group.title;
+  const expanded = isLogSectionExpanded(group.id) ? " open" : "";
+  const eventLabel = count === 1 ? "1 event" : `${count} events`;
+  return `
+    <details class="phase-card log-section" data-log-section="${escapeAttr(group.id)}"${expanded}>
+      <summary class="log-section-head">
+        <span class="section-chevron">›</span>
+        <span class="log-section-copy">
+          <span class="log-section-title">${escapeHtml(title)}</span>
+          <span class="log-section-summary">${escapeHtml(group.summary)}</span>
+        </span>
+        <span class="log-section-meta">${escapeHtml(eventLabel)} · ${formatTime(group.updated_at)}</span>
+      </summary>
+      <div class="log-section-items">
+        ${group.items.map(logEntryCard).join("") || `<div class="empty compact">No detailed events in this step.</div>`}
+      </div>
+    </details>
+  `;
+}
+
+function logEntryCard(item) {
+  const expanded = isLogEntryExpanded(item.id) ? " open" : "";
+  const message = item.message || item.event_type || "Event";
+  return `
+    <div class="event log-entry">
+      <span class="event-type">${escapeHtml(item.event_type || "event")}</span>
+      <details data-log-entry="${escapeAttr(item.id)}"${expanded}>
+        <summary class="log-entry-summary">
+          <span class="entry-text">${escapeHtml(message)}</span>
+          <span class="entry-action">more</span>
+        </summary>
+        <div class="event-message">${escapeHtml(message)}</div>
+        <div class="event-head">
+          <span>${escapeHtml(item.source)}</span>
+          <span>${formatTime(item.created_at)}</span>
+        </div>
+        <pre class="expanded-payload">${escapeHtml(JSON.stringify(item.payload, null, 2))}</pre>
+      </details>
+    </div>
+  `;
+}
+
+function isLogSectionExpanded(id) {
+  return state.expandedLogSections.has(id);
+}
+
+function isLogEntryExpanded(id) {
+  return state.expandedLogEntries.has(id);
 }
 
 function systemPage() {
@@ -377,6 +505,16 @@ function bind() {
       render();
     });
   });
+  document.querySelectorAll("[data-log-section]").forEach((section) => {
+    section.addEventListener("toggle", () => {
+      setExpanded(state.expandedLogSections, section.dataset.logSection, section.open);
+    });
+  });
+  document.querySelectorAll("[data-log-entry]").forEach((entry) => {
+    entry.addEventListener("toggle", () => {
+      setExpanded(state.expandedLogEntries, entry.dataset.logEntry, entry.open);
+    });
+  });
 }
 
 async function updateFilter(event) {
@@ -408,6 +546,10 @@ async function updateFilterButton(event) {
 
 async function selectSession(sessionId, { updateUrl = true } = {}) {
   if (!sessionId) return;
+  if (state.selectedSessionId !== sessionId) {
+    state.expandedLogSections.clear();
+    state.expandedLogEntries.clear();
+  }
   state.selectedSessionId = sessionId;
   state.tab = "logs";
   state.sessionDetail = state.sessionDetailCache.get(sessionId) || null;
@@ -500,22 +642,23 @@ function tabButton(tab) {
   return `<button class="tab ${state.tab === tab ? "active" : ""}" data-tab="${tab}">${tab}</button>`;
 }
 
-function eventCard(event) {
-  const payload = event.payload || safeJson(event.payload_json) || event;
-  const message = payload.message || payload.text || "";
-  return `
-    <div class="event">
-      <div class="event-head">
-        <span class="event-type">${escapeHtml(event.event_type || event.hook_name || "event")}</span>
-        <span>${formatTime(event.created_at)}</span>
-      </div>
-      ${message ? `<div class="event-message">${escapeHtml(String(message)).slice(0, 1200)}</div>` : ""}
-      <details>
-        <summary>Payload</summary>
-        <pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>
-      </details>
-    </div>
-  `;
+function logMessage(payload, eventType) {
+  const value = payload.message || payload.text || payload.goal || payload.error || "";
+  if (value) return String(value);
+  return eventType || "Event";
+}
+
+function maxTimestamp(left, right) {
+  return String(right).localeCompare(String(left)) > 0 ? right : left;
+}
+
+function setExpanded(set, key, expanded) {
+  if (!key) return;
+  if (expanded) {
+    set.add(key);
+  } else {
+    set.delete(key);
+  }
 }
 
 function tableRows(rows, keys) {
