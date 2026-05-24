@@ -72,6 +72,30 @@ class FrontendContractTest(unittest.TestCase):
         self.assertIn("async function refreshLiveSession()", source)
         self.assertIn("loadSelectedSessionDetail({ force: true, renderAfter: false })", source)
 
+    def test_run_status_metrics_apply_matching_status_filter(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+        styles = APP_CSS.read_text(encoding="utf-8")
+
+        self.assertIn('metric("Sessions", counts.sessions, "status", "all")', source)
+        self.assertIn('metric("Running", counts.running_sessions, "status", "running")', source)
+        self.assertIn('metric("Queued", counts.queued_inputs, "status", "queued")', source)
+        self.assertIn('metric("Failed", counts.failed_tasks, "status", "failed")', source)
+        self.assertIn('segment("status", "queued", "Queued", state.filters.status)', source)
+        self.assertRegex(source, r"function metric\(label, value, filter, filterValue\)")
+        self.assertIn('data-filter-button="${escapeAttr(filter)}"', source)
+        self.assertIn('data-value="${escapeAttr(filterValue)}"', source)
+        self.assertIn('aria-pressed="${filterValue === state.filters[filter] ? "true" : "false"}"', source)
+        self.assertIn(".metric-button", styles)
+        self.assertIn(".metric-button.active", styles)
+
+    def test_session_switcher_badge_shows_failed_task_status(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("${chip(sessionListStatus(row))}", source)
+        self.assertIn("function sessionListStatus(row)", source)
+        self.assertIn('if (row.latest_task_status === "failed") return "failed";', source)
+        self.assertIn("return row.status;", source)
+
     def test_left_rail_only_exposes_runs_and_system_with_innie_icon(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
 

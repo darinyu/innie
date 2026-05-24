@@ -64,7 +64,24 @@ class SqliteInnieStore:
 
         clauses: list[str] = []
         params: list[Any] = []
-        if status and status != "all":
+        if status == "queued":
+            clauses.append(
+                """EXISTS (
+                    SELECT 1 FROM session_inbox i
+                    WHERE i.session_id = s.id AND i.status = 'queued'
+                )"""
+            )
+        elif status == "failed":
+            clauses.append(
+                """(
+                    s.status = 'failed'
+                    OR EXISTS (
+                        SELECT 1 FROM tasks t
+                        WHERE t.session_id = s.id AND t.status = 'failed'
+                    )
+                )"""
+            )
+        elif status and status != "all":
             clauses.append("s.status = ?")
             params.append(status)
         if harness and harness != "all":
