@@ -110,6 +110,24 @@ def initialize_schema(db: sqlite3.Connection) -> None:
             metadata_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
+
+        CREATE TABLE IF NOT EXISTS slack_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            slack_event_id TEXT NOT NULL,
+            slack_file_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            mimetype TEXT,
+            filetype TEXT,
+            url_private_download TEXT,
+            local_path TEXT,
+            byte_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE(session_id, slack_event_id, slack_file_id)
+        );
         """
     )
     _ensure_column(db, "slack_triggers", "session_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")
@@ -121,6 +139,9 @@ def initialize_schema(db: sqlite3.Connection) -> None:
     _ensure_column(db, "artifacts", "task_id", "TEXT REFERENCES tasks(id) ON DELETE CASCADE")
     _ensure_column(db, "artifacts", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(db, "hook_events", "dedupe_key", "TEXT")
+    _ensure_column(db, "slack_files", "url_private_download", "TEXT")
+    _ensure_column(db, "slack_files", "byte_count", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(db, "slack_files", "error", "TEXT")
     db.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_tasks_session_created_at
@@ -143,6 +164,12 @@ def initialize_schema(db: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_artifacts_task_created_at
         ON artifacts(task_id, created_at)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_slack_files_session_event
+        ON slack_files(session_id, slack_event_id)
         """
     )
     db.execute(

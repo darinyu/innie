@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import sqlite3
 from typing import Any
 
@@ -8,6 +9,7 @@ from .hooks import SlackReactionClient, run_trigger_accepted_hook
 from .inbox import InboxRow, enqueue_trigger, find_row_for_trigger_message
 from .sessions import SessionRecord, resolve_session_for_trigger
 from .slack_events import SlackEventDecision, normalize_slack_event, persist_trigger
+from .slack_files import SlackFileClient, stage_slack_files_for_trigger
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,8 @@ def accept_slack_event(
     *,
     bot_user_id: str,
     slack: SlackReactionClient,
+    workspace: Path | None = None,
+    file_client: SlackFileClient | None = None,
     harness_id: str | None = None,
     watched_user_id: str | None = None,
 ) -> AcceptedSlackEvent:
@@ -55,6 +59,14 @@ def accept_slack_event(
 
     persist_trigger(db, decision.trigger)
     session = resolve_session_for_trigger(db, decision.trigger, harness_id=harness_id)
+    if workspace is not None:
+        stage_slack_files_for_trigger(
+            db,
+            workspace=workspace,
+            session_id=session.id,
+            trigger=decision.trigger,
+            file_client=file_client or slack,
+        )
     inbox = enqueue_trigger(db, session=session, trigger=decision.trigger)
     db.commit()
 

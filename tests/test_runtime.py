@@ -190,6 +190,31 @@ class ResumeRecordingAdapter:
         return []
 
 
+class GoalRecordingAdapter:
+    capabilities = HarnessCapabilities(supports_streaming=True)
+
+    def __init__(self, harness_id: str) -> None:
+        self.harness_id = harness_id
+        self.goals: list[str] = []
+
+    async def start_task(self, request):
+        self.goals.append(request.goal)
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        yield HarnessEvent(type="output", message="done")
+        yield HarnessEvent(type="completed")
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+
 def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_ts: str | None = None) -> SlackTrigger:
     return SlackTrigger(
         event_id=event_id,
@@ -204,6 +229,75 @@ def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_t
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_manager_appends_slack_file_paths_to_codex_goal(self) -> None:
+        self._assert_manager_appends_slack_file_paths_to_goal("codex")
+
+    def test_manager_appends_slack_file_paths_to_claude_goal(self) -> None:
+        self._assert_manager_appends_slack_file_paths_to_goal("claude")
+
+    def _assert_manager_appends_slack_file_paths_to_goal(self, harness_id: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            path = workspace / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("EvFile", "D1", "100.1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id=harness_id)
+            enqueue_trigger(db, session=session, trigger=item)
+            staged = workspace / ".innie" / "files" / session.id / "EvFile" / "report.txt"
+            staged.parent.mkdir(parents=True)
+            staged.write_text("report", encoding="utf-8")
+            db.execute(
+                """
+                INSERT INTO slack_files(
+                    session_id,
+                    slack_event_id,
+                    slack_file_id,
+                    name,
+                    mimetype,
+                    filetype,
+                    url_private_download,
+                    local_path,
+                    byte_count,
+                    status,
+                    error
+                )
+                VALUES(?, 'EvFile', 'F1', 'report.txt', 'text/plain', 'text', 'https://files.example/F1', ?, 6, 'staged', NULL)
+                """,
+                (session.id, str(staged)),
+            )
+            db.execute(
+                """
+                INSERT INTO slack_files(
+                    session_id,
+                    slack_event_id,
+                    slack_file_id,
+                    name,
+                    mimetype,
+                    filetype,
+                    url_private_download,
+                    local_path,
+                    byte_count,
+                    status,
+                    error
+                )
+                VALUES(?, 'EvFile', 'F2', 'missing.csv', 'text/csv', 'csv', 'https://files.example/F2', NULL, 0, 'failed', 'not_allowed')
+                """,
+                (session.id,),
+            )
+            db.commit()
+            adapter = GoalRecordingAdapter(harness_id)
+            manager = SessionManager(path, adapters={harness_id: adapter}, slack=FakeSlackReplies(), workspace=workspace)
+
+            asyncio.run(manager.run_until_idle())
+
+            self.assertEqual(1, len(adapter.goals))
+            goal = adapter.goals[0]
+            self.assertIn("text EvFile", goal)
+            self.assertIn("Attached files:\n- " + str(staged), goal)
+            self.assertIn("Attachment warnings:\n- missing.csv: download failed: not_allowed", goal)
+
     def test_worker_pool_processes_different_sessions_concurrently(self) -> None:
         async def run_manager(manager: SessionManager, adapter: BlockingAdapter) -> None:
             run_task = asyncio.create_task(manager.run_until_idle())

@@ -21,6 +21,7 @@ from .inbox import (
 from .progress import SlackProgressRenderer
 from .sessions import get_session
 from .sessions import set_harness_resume_id
+from .slack_files import build_goal_with_files, list_files_for_inbox
 from .tasks import (
     TaskRecord,
     append_harness_event,
@@ -81,10 +82,11 @@ class SessionActor:
             session = get_session(self._db, self.session_id)
             harness_id = session.harness_id or "codex"
             adapter = self._adapters[harness_id]
+            goal = self._goal_for_row(row)
             task = create_task(
                 self._db,
                 session_id=self.session_id,
-                goal=row.text,
+                goal=goal,
                 output_target=session.output_target,
                 harness_id=harness_id,
                 execution_mode="autonomous",
@@ -129,10 +131,11 @@ class SessionActor:
             self._renew_session_lock_until_stopped(worker_id=worker_id, run_id=run_id, stop=stop_renewal)
         )
         try:
+            goal = self._goal_for_row(row)
             task = create_task(
                 self._db,
                 session_id=self.session_id,
-                goal=row.text,
+                goal=goal,
                 output_target=session.output_target,
                 harness_id=harness_id,
                 execution_mode="autonomous",
@@ -209,6 +212,10 @@ class SessionActor:
                     },
                 )
                 self._db.commit()
+
+    def _goal_for_row(self, row) -> str:
+        records = list_files_for_inbox(self._db, session_id=row.session_id, slack_event_id=row.slack_event_id)
+        return build_goal_with_files(row.text, records)
 
     async def _run_harness_turn(self, adapter: HarnessAdapter, task: TaskRecord, row) -> str:
         start_event = HarnessEvent(type="started")
