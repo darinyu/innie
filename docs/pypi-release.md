@@ -1,8 +1,8 @@
-# PyPI Release Plan
+# PyPI Release Notes
 
-The goal is to publish Innie as a PyPI alpha. The repo-side release path is
-ready when the package can be built, validated, installed from a wheel, and
-published by the trusted publishing workflow.
+Innie is published on PyPI as an alpha package. The repo-side release path
+builds and validates distributions, smoke-tests the installed wheel, and
+publishes through PyPI trusted publishing.
 
 ## Release Readiness Tasks
 
@@ -16,10 +16,10 @@ published by the trusted publishing workflow.
 - [x] Add `CONTRIBUTING.md` and `SECURITY.md`.
 - [x] Pick the first public version: `0.1.0`.
 - [x] Add release notes in `CHANGELOG.md`.
-- [ ] Configure a PyPI trusted publisher for
+- [x] Configure a PyPI trusted publisher for
       `darinyu/innie/.github/workflows/publish.yml` with environment `pypi`.
-- [ ] Create a GitHub release with clear alpha notes.
-- [ ] Restore the README PyPI badge after the first successful PyPI publish.
+- [x] Create a GitHub release with clear alpha notes.
+- [x] Restore the README PyPI badge after the first successful PyPI publish.
 
 ## Manual Release Checklist
 
