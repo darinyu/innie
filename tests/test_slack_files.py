@@ -147,7 +147,7 @@ class SlackFilesTest(unittest.TestCase):
             self.assertEqual(3, db.execute("SELECT COUNT(*) AS count FROM slack_files").fetchone()["count"])
             self.assertEqual(3, len(client.downloads))
 
-    def test_stage_slack_files_stages_untruncated_text_preview_without_download(self) -> None:
+    def test_stage_slack_files_downloads_text_snippet_without_using_preview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             db = connect(workspace / "innie.db")
@@ -174,13 +174,14 @@ class SlackFilesTest(unittest.TestCase):
                                 "preview": "helloworld\n",
                                 "preview_is_truncated": False,
                                 "url_private_download": "https://files.example/F1",
+                                "url_private": "https://files.example/F1-private",
                             },
                         ]
                     },
                 },
             )
 
-            client = FakeFileClient()
+            client = FakeFileClient(failures={"https://files.example/F1": RuntimeError("slack_login_redirect")})
 
             records = stage_slack_files_for_trigger(
                 db,
@@ -191,9 +192,18 @@ class SlackFilesTest(unittest.TestCase):
             )
 
             self.assertEqual(["staged"], [record.status for record in records])
-            self.assertEqual("helloworld\n", Path(records[0].local_path).read_text())
-            self.assertEqual(len("helloworld\n".encode("utf-8")), records[0].byte_count)
-            self.assertEqual([], client.downloads)
+            self.assertEqual("contents for https://files.example/F1-private", Path(records[0].local_path).read_text())
+            self.assertEqual(len("contents for https://files.example/F1-private".encode("utf-8")), records[0].byte_count)
+            self.assertEqual(
+                [
+                    ("https://files.example/F1", workspace / ".innie" / "files" / "sess_1" / "EvSnippet" / "test_codex.txt"),
+                    (
+                        "https://files.example/F1-private",
+                        workspace / ".innie" / "files" / "sess_1" / "EvSnippet" / "test_codex.txt",
+                    ),
+                ],
+                client.downloads,
+            )
 
 
 if __name__ == "__main__":

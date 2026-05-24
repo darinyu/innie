@@ -65,34 +65,32 @@ def stage_slack_files_for_trigger(
         name = str(file_info.get("name") or file_info.get("title") or slack_file_id)
         mimetype = _optional_str(file_info.get("mimetype"))
         filetype = _optional_str(file_info.get("filetype"))
-        url = _optional_str(file_info.get("url_private_download") or file_info.get("url_private"))
+        urls = _download_urls(file_info)
+        url = urls[0] if urls else None
         local_path: str | None = None
         byte_count = 0
         status = "failed"
         error: str | None = None
 
-        preview = _untruncated_text_preview(file_info)
-        if preview is not None:
-            destination = _unique_destination(event_dir, name, used_paths)
-            used_paths.add(destination)
-            destination.write_bytes(preview)
-            byte_count = len(preview)
-            local_path = str(destination)
-            status = "staged"
-        elif not url:
+        if not urls:
             error = "missing_download_url"
         else:
             destination = _unique_destination(event_dir, name, used_paths)
             used_paths.add(destination)
-            result = file_client.download_file(url, destination)
-            if result.error:
-                if destination.exists():
-                    destination.unlink()
-                error = result.error
-            else:
+            errors: list[str] = []
+            for candidate_url in urls:
+                result = file_client.download_file(candidate_url, destination)
+                if result.error:
+                    if destination.exists():
+                        destination.unlink()
+                    errors.append(result.error)
+                    continue
                 byte_count = result.byte_count
                 local_path = str(destination)
                 status = "staged"
+                break
+            if status != "staged":
+                error = "; ".join(errors) if errors else "download_failed"
 
         db.execute(
             """
@@ -238,18 +236,13 @@ def _safe_filename(name: str) -> str:
     return safe or "file"
 
 
-def _untruncated_text_preview(file_info: dict[str, Any]) -> bytes | None:
-    preview = file_info.get("preview")
-    if not isinstance(preview, str):
-        return None
-    if file_info.get("preview_is_truncated") is not False:
-        return None
-    mimetype = _optional_str(file_info.get("mimetype")) or ""
-    filetype = _optional_str(file_info.get("filetype")) or ""
-    mode = _optional_str(file_info.get("mode")) or ""
-    if not (mimetype.startswith("text/") or filetype == "text" or mode == "snippet"):
-        return None
-    return preview.encode("utf-8")
+def _download_urls(file_info: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for value in (file_info.get("url_private_download"), file_info.get("url_private")):
+        url = _optional_str(value)
+        if url is not None and url not in urls:
+            urls.append(url)
+    return urls
 
 
 def _optional_str(value: Any) -> str | None:
