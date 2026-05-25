@@ -26,6 +26,9 @@ class SqliteInnieStoreTest(unittest.TestCase):
         self.assertEqual(overview["counts"]["queued_inputs"], 2)
         self.assertEqual(overview["counts"]["failed_tasks"], 1)
         self.assertEqual(overview["counts"]["locked_sessions"], 1)
+        self.assertEqual(overview["counts"]["active_workers"], 0)
+        self.assertEqual(overview["counts"]["queued_sessions"], 1)
+        self.assertEqual(overview["counts"]["stale_sessions"], 1)
         self.assertEqual(overview["latest_event_id"], 4)
 
     def test_list_sessions_supports_status_filter_and_search(self) -> None:
@@ -38,6 +41,8 @@ class SqliteInnieStoreTest(unittest.TestCase):
         self.assertEqual(rows[0]["latest_user_message"], "also inspect tests")
         self.assertEqual(rows[0]["queued_inputs"], 2)
         self.assertEqual(rows[0]["last_event_type"], "harness.progress")
+        self.assertEqual(rows[0]["latest_worker_event_type"], "worker.session.claimed")
+        self.assertEqual(rows[0]["lock_state"], "stale")
 
     def test_list_sessions_supports_queued_inbox_filter(self) -> None:
         store = SqliteInnieStore(self.db_path)
@@ -101,6 +106,11 @@ class SqliteInnieStoreTest(unittest.TestCase):
         self.assertEqual(len(detail["inbox"]), 2)
         self.assertEqual(len(detail["task_events"]), 2)
         self.assertEqual(len(detail["hook_events"]), 1)
+        self.assertEqual(detail["worker"]["queue_depth"], 2)
+        self.assertEqual(detail["worker"]["status"], "stale")
+        self.assertEqual(detail["worker"]["lock_owner"], "worker-1")
+        self.assertEqual(detail["worker"]["current_task_id"], "task_running")
+        self.assertEqual(detail["worker"]["latest_event"]["event_type"], "worker.session.claimed")
 
     def test_event_cursors_return_next_cursor(self) -> None:
         store = SqliteInnieStore(self.db_path)

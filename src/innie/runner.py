@@ -153,6 +153,7 @@ def run_forever_socket(
     output: OutputFn = print,
     verbose: bool = False,
     max_workers: int = 7,
+    session_worker_idle_ttl_seconds: float = 60.0,
 ) -> int:
     return asyncio.run(
         _run_forever_socket_async(
@@ -166,6 +167,7 @@ def run_forever_socket(
             output=output,
             verbose=verbose,
             max_workers=max_workers,
+            session_worker_idle_ttl_seconds=session_worker_idle_ttl_seconds,
         )
     )
 
@@ -182,6 +184,7 @@ async def _run_forever_socket_async(
     output: OutputFn,
     verbose: bool,
     max_workers: int,
+    session_worker_idle_ttl_seconds: float,
 ) -> int:
     workspace = workspace.resolve()
     config = read_workspace_config(workspace)
@@ -197,6 +200,7 @@ async def _run_forever_socket_async(
     accepted_count = 0
     seen_count = 0
     drain_task: asyncio.Task | None = None
+    drain_stop: asyncio.Event | None = None
     payloads = _receive_socket_payloads(selected_source)
     while True:
         try:
@@ -217,19 +221,11 @@ async def _run_forever_socket_async(
                 drain=False,
             )
         except KeyboardInterrupt:
-            if drain_task is not None:
-                try:
-                    await drain_task
-                except Exception as exc:
-                    output(f"worker drain failed during shutdown: {exc}")
+            await _stop_drain_task(drain_task, drain_stop, output=output)
             output(f"stopped after {accepted_count} accepted event(s)")
             return accepted_count
         except StopAsyncIteration:
-            if drain_task is not None:
-                try:
-                    await drain_task
-                except Exception as exc:
-                    output(f"worker drain failed during shutdown: {exc}")
+            await _stop_drain_task(drain_task, drain_stop, output=output)
             output(f"stopped after {accepted_count} accepted event(s)")
             return accepted_count
         seen_count += 1
@@ -242,6 +238,7 @@ async def _run_forever_socket_async(
                         drain_task.result()
                     except Exception as exc:
                         output(f"worker drain failed: {exc}")
+                drain_stop = asyncio.Event()
                 drain_task = asyncio.create_task(
                     _drain_workspace(
                         workspace,
@@ -250,6 +247,8 @@ async def _run_forever_socket_async(
                         verbose=verbose,
                         output=output,
                         max_workers=max_workers,
+                        session_worker_idle_ttl_seconds=session_worker_idle_ttl_seconds,
+                        stop_when_idle=drain_stop,
                     )
                 )
         else:
@@ -413,6 +412,8 @@ async def _drain_workspace(
     verbose: bool,
     output: OutputFn | None,
     max_workers: int,
+    session_worker_idle_ttl_seconds: float = 0.0,
+    stop_when_idle: asyncio.Event | None = None,
 ) -> None:
     db_path = innie_dir(workspace) / "innie.db"
     manager = SessionManager(
@@ -422,11 +423,29 @@ async def _drain_workspace(
         workspace=workspace,
         event_output=output if verbose else None,
         max_workers=max_workers,
+        session_worker_idle_ttl_seconds=session_worker_idle_ttl_seconds,
+        stop_when_idle=stop_when_idle,
     )
     try:
         await manager.run_until_idle()
+    except asyncio.CancelledError:
+        await manager.shutdown()
+        raise
     finally:
         manager.close()
+
+
+async def _stop_drain_task(drain_task: asyncio.Task | None, stop_when_idle: asyncio.Event | None, *, output: OutputFn) -> None:
+    if drain_task is None:
+        return
+    if stop_when_idle is not None:
+        stop_when_idle.set()
+    try:
+        await drain_task
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        output(f"worker drain failed during shutdown: {exc}")
 
 
 def format_run_acceptance(result: RunOnceResult) -> str:
