@@ -7,6 +7,7 @@ import json
 
 from ..harness import HarnessArtifact, HarnessCapabilities, HarnessEvent, TaskHandle, TaskRequest, TokenUsage
 from ..prompts import load_harness_system_prompt
+from ..slack_mcp_config import claude_slack_mcp_config_path, slack_mcp_process_env
 from .codex import _drain_stderr, _extract_text, _safe_json_preview, _stderr_summary, _write_prompt
 
 
@@ -50,9 +51,16 @@ class ClaudeCliAdapter:
             "--append-system-prompt",
             load_harness_system_prompt(),
         ]
+        mcp_config_path = claude_slack_mcp_config_path(request.workspace)
+        if mcp_config_path is not None:
+            args.extend(["--mcp-config", mcp_config_path])
         if resume_id is not None:
             args.extend(["--resume", resume_id])
-        process = await self._spawn(*args, cwd=request.workspace)
+        env = slack_mcp_process_env(request.workspace)
+        if env is None:
+            process = await self._spawn(*args, cwd=request.workspace)
+        else:
+            process = await self._spawn(*args, cwd=request.workspace, env=env)
         await _write_prompt(process, request.goal)
         self._processes[request.task_id] = process
         stderr = getattr(process, "stderr", None)
@@ -107,10 +115,11 @@ class ClaudeCliAdapter:
     async def collect_artifacts(self, task_id: str) -> list[HarnessArtifact]:
         return []
 
-    async def _default_spawn(self, *args: str, cwd: str) -> asyncio.subprocess.Process:
+    async def _default_spawn(self, *args: str, cwd: str, env: dict[str, str] | None = None) -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(
             *args,
             cwd=cwd,
+            env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

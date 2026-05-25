@@ -12,6 +12,8 @@ class HarnessSystemPromptTest(unittest.TestCase):
         self.assertIn("Slack", prompt)
         self.assertIn("search", prompt.lower())
         self.assertIn("thread", prompt.lower())
+        self.assertIn("slack_get_thread", prompt)
+        self.assertIn("slack_find_messages", prompt)
         self.assertIn("Slack-friendly", prompt)
 
 

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
 from innie.adapters.claude import ClaudeCliAdapter, ClaudeSessionAdapter
+from innie.config import write_secrets
 from innie.harness import HarnessEvent, TaskRequest
 from innie.prompts import load_harness_system_prompt
 
@@ -159,6 +162,42 @@ class ClaudeCliAdapterTest(unittest.TestCase):
             await adapter.start_task(task_request(resume_id="claude-session-1"))
 
         asyncio.run(run())
+
+    def test_start_task_adds_slack_mcp_config_when_bot_token_exists(self) -> None:
+        process = FakeProcess([])
+        calls: list[tuple[tuple[str, ...], str, dict[str, str] | None]] = []
+
+        async def spawn(*args: str, cwd: str, env: dict[str, str] | None = None):
+            calls.append((args, cwd, env))
+            return process
+
+        adapter = ClaudeCliAdapter(spawn=spawn)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_secrets(Path(tmp), {"slack_bot_token": "xoxb-test-token"})
+            request = task_request()
+            request = TaskRequest(
+                task_id=request.task_id,
+                session_id=request.session_id,
+                goal=request.goal,
+                workspace=tmp,
+                output_target=request.output_target,
+                execution_mode=request.execution_mode,
+                recovery_context=request.recovery_context,
+            )
+
+            async def run() -> None:
+                await adapter.start_task(request)
+
+            asyncio.run(run())
+
+            args, cwd, env = calls[0]
+            self.assertIn("--mcp-config", args)
+            config_path = Path(args[args.index("--mcp-config") + 1])
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertIn("innie_slack", config["mcpServers"])
+            self.assertEqual("xoxb-test-token", env["INNIE_SLACK_BOT_TOKEN"])
+            self.assertEqual(b"write tests", process.stdin.data)
 
     def test_maps_stream_json_events_and_captures_session_id_for_resume(self) -> None:
         process = FakeProcess(

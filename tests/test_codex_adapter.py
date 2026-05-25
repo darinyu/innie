@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
 from innie.adapters.codex import CodexCliAdapter, CodexSessionAdapter
+from innie.config import write_secrets
 from innie.harness import TaskRequest
 from innie.prompts import load_harness_system_prompt
 
@@ -115,6 +118,41 @@ class CodexCliAdapterTest(unittest.TestCase):
         )
         self.assertEqual("/tmp/work", calls[0][1])
         self.assertEqual(b"follow up", process.stdin.data)
+
+    def test_start_task_adds_slack_mcp_config_when_bot_token_exists(self) -> None:
+        process = FakeProcess([])
+        calls: list[tuple[tuple[str, ...], str, dict[str, str] | None]] = []
+
+        async def spawn(*args: str, cwd: str, env: dict[str, str] | None = None):
+            calls.append((args, cwd, env))
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_secrets(Path(tmp), {"slack_bot_token": "xoxb-test-token"})
+
+            async def run() -> None:
+                await adapter.start_task(
+                    TaskRequest(
+                        task_id="task_1",
+                        session_id="sess_1",
+                        goal="write tests",
+                        workspace=tmp,
+                        output_target="slack:D1:100.1",
+                        execution_mode="autonomous",
+                        recovery_context={},
+                    )
+                )
+
+            asyncio.run(run())
+
+        args, cwd, env = calls[0]
+        self.assertEqual("-", args[-1])
+        self.assertIn("mcp_servers.innie_slack.command", " ".join(args))
+        self.assertIn("mcp_servers.innie_slack.args", " ".join(args))
+        self.assertEqual("xoxb-test-token", env["INNIE_SLACK_BOT_TOKEN"])
+        self.assertEqual(b"write tests", process.stdin.data)
 
     def test_maps_thread_started_to_resume_event(self) -> None:
         process = FakeProcess(
