@@ -6,6 +6,7 @@ from typing import Any
 import json
 
 from ..harness import HarnessArtifact, HarnessCapabilities, HarnessEvent, TaskHandle, TaskRequest, TokenUsage
+from ..prompts import load_harness_system_prompt
 from .codex import _drain_stderr, _extract_text, _safe_json_preview, _stderr_summary, _write_prompt
 
 
@@ -46,6 +47,8 @@ class ClaudeCliAdapter:
             "stream-json",
             "--input-format",
             "text",
+            "--append-system-prompt",
+            load_harness_system_prompt(),
         ]
         if resume_id is not None:
             args.extend(["--resume", resume_id])

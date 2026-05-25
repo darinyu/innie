@@ -7,6 +7,7 @@ from unittest import mock
 
 from innie.adapters.claude import ClaudeCliAdapter, ClaudeSessionAdapter
 from innie.harness import HarnessEvent, TaskRequest
+from innie.prompts import load_harness_system_prompt
 
 
 class FakeProcess:
@@ -114,6 +115,8 @@ class ClaudeCliAdapterTest(unittest.TestCase):
                     "stream-json",
                     "--input-format",
                     "text",
+                    "--append-system-prompt",
+                    load_harness_system_prompt(),
                 ),
                 spawn.call_args.args,
             )
@@ -141,6 +144,8 @@ class ClaudeCliAdapterTest(unittest.TestCase):
                     "stream-json",
                     "--input-format",
                     "text",
+                    "--append-system-prompt",
+                    load_harness_system_prompt(),
                     "--resume",
                     "claude-session-1",
                 ),
