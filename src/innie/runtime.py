@@ -13,9 +13,9 @@ from .db import connect, initialize_schema
 from .harness import HarnessAdapter, HarnessEvent, TaskRequest
 from .inbox import (
     acquire_session_lock,
+    available_queued_session_ids,
     claim_next_inbox_row,
     mark_inbox_done,
-    queued_session_ids,
     release_session_lock,
     renew_session_lock,
 )
@@ -74,48 +74,6 @@ class SessionWorker:
 
     def wake(self) -> None:
         self._wake_requested.set()
-
-    async def run_until_idle(self) -> None:
-        while not self._cancel_requested:
-            row = claim_next_inbox_row(self._db, self.session_id)
-            if row is None:
-                if _session_status(self._db, self.session_id) != "canceled":
-                    _set_session_status(self._db, self.session_id, "idle")
-                self._db.commit()
-                return
-
-            _set_session_status(self._db, self.session_id, "running")
-            _append_event(
-                self._db,
-                self.session_id,
-                "actor.input.claimed",
-                {"inbox_id": row.id, "text": row.text},
-            )
-            session = get_session(self._db, self.session_id)
-            harness_id = session.harness_id or "codex"
-            adapter = self._adapters[harness_id]
-            goal = self._goal_for_row(row)
-            task = create_task(
-                self._db,
-                session_id=self.session_id,
-                goal=goal,
-                output_target=session.output_target,
-                harness_id=harness_id,
-                execution_mode="autonomous",
-            )
-            record_adapter_capabilities(self._db, harness_id, adapter.capabilities)
-            set_task_status(self._db, task.id, "running")
-            self._db.commit()
-
-            terminal_status = await self._run_harness_turn(adapter, task, row)
-            set_task_status(self._db, task.id, terminal_status)
-            if terminal_status == "completed":
-                record_artifacts(self._db, task, await adapter.collect_artifacts(task.id))
-            mark_inbox_done(self._db, row.id)
-            self._db.commit()
-
-        _set_session_status(self._db, self.session_id, "canceled")
-        self._db.commit()
 
     async def run_worker(
         self,
@@ -653,7 +611,7 @@ class SessionManager:
         self.session_worker_idle_ttl_seconds = max(0.0, session_worker_idle_ttl_seconds)
         self.stop_when_idle = stop_when_idle
         self.run_id = f"run_{uuid.uuid4().hex[:16]}"
-        self._running_workers: set[str] = set()
+        self._live_worker_ids: set[str] = set()
         self._active_sessions: dict[str, asyncio.Task[None]] = {}
         self._worker_sequence = 0
 
@@ -753,7 +711,7 @@ class SessionManager:
                     "inbox_requeued": processing_inbox,
                 },
             )
-            if self.event_output is not None:
+            if self.event_output is not None and (running_tasks or processing_inbox):
                 self.event_output(
                     f"session {session_id} startup recovery: "
                     f"interrupted_tasks={len(running_tasks)} requeued_inbox={len(processing_inbox)}"
@@ -763,12 +721,14 @@ class SessionManager:
     async def _run_session_workers_until_idle(self) -> None:
         while True:
             scheduled = self._schedule_available_session_workers()
+            if scheduled:
+                await asyncio.sleep(0)
+                self._emit_worker_heartbeat()
             if not self._active_sessions:
                 if not scheduled:
                     return
                 continue
             if scheduled and len(self._active_sessions) < self.max_workers:
-                await asyncio.sleep(0)
                 continue
 
             done, _ = await asyncio.wait(
@@ -782,7 +742,7 @@ class SessionManager:
     def _schedule_available_session_workers(self) -> bool:
         scheduled = False
         capacity = self.max_workers - len(self._active_sessions)
-        for session_id in queued_session_ids(self.db):
+        for session_id in available_queued_session_ids(self.db):
             if session_id in self._active_sessions:
                 self.workers[session_id].wake()
                 scheduled = True
@@ -790,9 +750,6 @@ class SessionManager:
             if capacity <= 0:
                 return scheduled
             worker_id = self._next_worker_id()
-            if not acquire_session_lock(self.db, session_id, worker_id=worker_id):
-                self.db.commit()
-                continue
             worker = self.workers.setdefault(
                 session_id,
                 SessionWorker(
@@ -807,9 +764,8 @@ class SessionManager:
             )
             task = asyncio.create_task(self._run_session_worker(worker, worker_id=worker_id))
             self._active_sessions[session_id] = task
-            self._running_workers.add(worker_id)
+            self._live_worker_ids.add(worker_id)
             self.db.commit()
-            self._emit_worker_heartbeat()
             scheduled = True
             capacity -= 1
         return scheduled
@@ -824,7 +780,7 @@ class SessionManager:
             )
         finally:
             self._active_sessions.pop(worker.session_id, None)
-            self._running_workers.discard(worker_id)
+            self._live_worker_ids.discard(worker_id)
             self.workers.pop(worker.session_id, None)
             self._emit_worker_heartbeat()
 
@@ -842,7 +798,7 @@ class SessionManager:
     def _emit_worker_heartbeat(self) -> None:
         if self.event_output is None:
             return
-        live = len(self._running_workers)
+        live = len(self._live_worker_ids)
         queued = self.db.execute(
             "SELECT COUNT(DISTINCT session_id) AS count FROM session_inbox WHERE status = 'queued'"
         ).fetchone()["count"]

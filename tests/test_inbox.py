@@ -6,12 +6,11 @@ import unittest
 
 from innie.db import connect, initialize_schema
 from innie.inbox import (
-    claim_next_available_inbox_row,
+    available_queued_session_ids,
     claim_next_inbox_row,
     enqueue_trigger,
     mark_inbox_done,
     queued_inbox_rows,
-    release_session_lock,
 )
 from innie.sessions import resolve_session_for_trigger
 from innie.slack_events import SlackTrigger, persist_trigger
@@ -66,7 +65,7 @@ class InboxTest(unittest.TestCase):
             self.assertEqual("one", claim_next_inbox_row(db, sessions[0]["id"]).text)
             self.assertEqual("two", claim_next_inbox_row(db, sessions[1]["id"]).text)
 
-    def test_global_claim_skips_locked_session_and_claims_next_eligible_row(self) -> None:
+    def test_available_queued_sessions_skip_locked_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = connect(Path(tmp) / "innie.db")
             initialize_schema(db)
@@ -91,23 +90,14 @@ class InboxTest(unittest.TestCase):
                 (locked_session_id,),
             )
 
-            claimed = claim_next_available_inbox_row(db, worker_id="worker-1")
+            available = available_queued_session_ids(db)
 
-            self.assertIsNotNone(claimed)
-            self.assertEqual("newer", claimed.text)
-            row = db.execute(
-                """
-                SELECT i.status AS inbox_status, s.locked_by
-                FROM session_inbox i
-                JOIN sessions s ON s.id = i.session_id
-                WHERE i.id = ?
-                """,
-                (claimed.id,),
-            ).fetchone()
-            self.assertEqual("processing", row["inbox_status"])
-            self.assertEqual("worker-1", row["locked_by"])
+            self.assertEqual(
+                [db.execute("SELECT id FROM sessions WHERE slack_channel_id = 'D2'").fetchone()["id"]],
+                available,
+            )
 
-    def test_global_claim_reuses_expired_session_lock(self) -> None:
+    def test_available_queued_sessions_include_expired_session_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = connect(Path(tmp) / "innie.db")
             initialize_schema(db)
@@ -126,17 +116,9 @@ class InboxTest(unittest.TestCase):
                 (session.id,),
             )
 
-            claimed = claim_next_available_inbox_row(db, worker_id="worker-1")
+            available = available_queued_session_ids(db)
 
-            self.assertIsNotNone(claimed)
-            self.assertEqual("stale", claimed.text)
-            row = db.execute("SELECT locked_by FROM sessions WHERE id = ?", (session.id,)).fetchone()
-            self.assertEqual("worker-1", row["locked_by"])
-
-            release_session_lock(db, session.id, worker_id="worker-1")
-            row = db.execute("SELECT locked_by, lock_expires_at FROM sessions WHERE id = ?", (session.id,)).fetchone()
-            self.assertIsNone(row["locked_by"])
-            self.assertIsNone(row["lock_expires_at"])
+            self.assertEqual([session.id], available)
 
 
 if __name__ == "__main__":
