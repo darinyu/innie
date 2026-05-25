@@ -12,7 +12,8 @@ from .control import SlackReplyClient
 from .db import connect, initialize_schema
 from .harness import HarnessAdapter, HarnessEvent, TaskRequest
 from .inbox import (
-    claim_next_available_inbox_row,
+    acquire_session_lock,
+    available_queued_session_ids,
     claim_next_inbox_row,
     mark_inbox_done,
     release_session_lock,
@@ -36,7 +37,7 @@ TERMINAL_STATUSES = {"canceled", "completed"}
 EventOutput = Callable[[str], None]
 
 
-class SessionActor:
+class SessionWorker:
     def __init__(
         self,
         db: sqlite3.Connection,
@@ -59,53 +60,126 @@ class SessionActor:
         self._progress_messages: dict[str, tuple[str, str]] = {}
         self._progress_details: dict[str, list[str]] = {}
         self._progress_summaries: dict[str, str] = {}
+        self._wake_requested = asyncio.Event()
+        self._shutdown_requested = False
+        self._harness_sessions: dict[str, HarnessAdapter] = {}
 
     def cancel(self) -> None:
         self._cancel_requested = True
+        self.wake()
 
-    async def run_until_idle(self) -> None:
-        while not self._cancel_requested:
-            row = claim_next_inbox_row(self._db, self.session_id)
-            if row is None:
-                if _session_status(self._db, self.session_id) != "canceled":
-                    _set_session_status(self._db, self.session_id, "idle")
-                self._db.commit()
-                return
+    def shutdown(self) -> None:
+        self._shutdown_requested = True
+        self.wake()
 
-            _set_session_status(self._db, self.session_id, "running")
+    def wake(self) -> None:
+        self._wake_requested.set()
+
+    async def run_worker(
+        self,
+        *,
+        worker_id: str,
+        run_id: str,
+        idle_ttl_seconds: float = 0.0,
+        stop_when_idle: asyncio.Event | None = None,
+    ) -> None:
+        _append_event(
+            self._db,
+            self.session_id,
+            "worker.session.started",
+            {"run_id": run_id, "worker_id": worker_id, "session_id": self.session_id},
+        )
+        self._db.commit()
+        terminal_status = "idle"
+        try:
+            while not self._cancel_requested and not self._shutdown_requested:
+                self._wake_requested.clear()
+                await self._drain_locked_session(worker_id=worker_id, run_id=run_id)
+                if self._cancel_requested or self._shutdown_requested or _event_is_set(stop_when_idle):
+                    break
+                if idle_ttl_seconds <= 0:
+                    break
+                try:
+                    await _wait_for_wake_or_stop(self._wake_requested, stop_when_idle, timeout=idle_ttl_seconds)
+                except asyncio.TimeoutError:
+                    break
+            if self._cancel_requested:
+                terminal_status = "canceled"
+                _set_session_status(self._db, self.session_id, "canceled")
+            elif _session_status(self._db, self.session_id) != "canceled":
+                _set_session_status(self._db, self.session_id, "idle")
+                _append_event(
+                    self._db,
+                    self.session_id,
+                    "worker.session.idle",
+                    {"run_id": run_id, "worker_id": worker_id, "session_id": self.session_id},
+                )
+            self._db.commit()
+        except Exception as exc:
+            terminal_status = "failed"
             _append_event(
                 self._db,
                 self.session_id,
-                "actor.input.claimed",
-                {"inbox_id": row.id, "text": row.text},
+                "worker.session.failed",
+                {
+                    "run_id": run_id,
+                    "worker_id": worker_id,
+                    "session_id": self.session_id,
+                    "error": str(exc) or exc.__class__.__name__,
+                },
             )
-            session = get_session(self._db, self.session_id)
-            harness_id = session.harness_id or "codex"
-            adapter = self._adapters[harness_id]
-            goal = self._goal_for_row(row)
-            task = create_task(
+            self._db.commit()
+            raise
+        finally:
+            await self._close_harness_sessions()
+            _append_event(
                 self._db,
-                session_id=self.session_id,
-                goal=goal,
-                output_target=session.output_target,
-                harness_id=harness_id,
-                execution_mode="autonomous",
+                self.session_id,
+                "worker.session.released",
+                {
+                    "run_id": run_id,
+                    "worker_id": worker_id,
+                    "session_id": self.session_id,
+                    "status": terminal_status,
+                },
             )
-            record_adapter_capabilities(self._db, harness_id, adapter.capabilities)
-            set_task_status(self._db, task.id, "running")
             self._db.commit()
 
-            terminal_status = await self._run_harness_turn(adapter, task, row)
-            set_task_status(self._db, task.id, terminal_status)
-            if terminal_status == "completed":
-                record_artifacts(self._db, task, await adapter.collect_artifacts(task.id))
-            mark_inbox_done(self._db, row.id)
+    async def _drain_locked_session(self, *, worker_id: str, run_id: str) -> None:
+        if not acquire_session_lock(self._db, self.session_id, worker_id=worker_id):
             self._db.commit()
-
-        _set_session_status(self._db, self.session_id, "canceled")
+            return
+        _append_event(
+            self._db,
+            self.session_id,
+            "worker.session.lock_acquired",
+            {
+                "run_id": run_id,
+                "worker_id": worker_id,
+                "session_id": self.session_id,
+                "lock_expires_at": _session_lock_expires_at(self._db, self.session_id),
+            },
+        )
         self._db.commit()
+        stop_renewal = asyncio.Event()
+        renewal_task = asyncio.create_task(
+            self._renew_session_lock_until_stopped(worker_id=worker_id, run_id=run_id, stop=stop_renewal)
+        )
+        try:
+            while not self._cancel_requested and not self._shutdown_requested:
+                row = claim_next_inbox_row(self._db, self.session_id)
+                if row is None:
+                    break
+                _set_session_status(self._db, self.session_id, "running")
+                self._db.commit()
+                await self._process_inbox_row(row, worker_id=worker_id, run_id=run_id)
+        finally:
+            stop_renewal.set()
+            await renewal_task
+            release_session_lock(self._db, self.session_id, worker_id=worker_id)
+            self._db.commit()
 
-    async def run_claimed_row(self, row, *, worker_id: str, run_id: str) -> None:
+    async def _process_inbox_row(self, row, *, worker_id: str, run_id: str) -> None:
         lock_expires_at = _session_lock_expires_at(self._db, self.session_id)
         _append_event(
             self._db,
@@ -123,13 +197,9 @@ class SessionActor:
         )
         session = get_session(self._db, self.session_id)
         harness_id = session.harness_id or "codex"
-        adapter = self._adapters[harness_id]
+        adapter = await self._adapter_for_turn(harness_id, session.harness_resume_id)
         task: TaskRecord | None = None
         terminal_status = "failed"
-        stop_renewal = asyncio.Event()
-        renewal_task = asyncio.create_task(
-            self._renew_session_lock_until_stopped(worker_id=worker_id, run_id=run_id, stop=stop_renewal)
-        )
         try:
             goal = self._goal_for_row(row)
             task = create_task(
@@ -142,6 +212,18 @@ class SessionActor:
             )
             record_adapter_capabilities(self._db, harness_id, adapter.capabilities)
             set_task_status(self._db, task.id, "running")
+            _append_event(
+                self._db,
+                self.session_id,
+                "worker.turn.started",
+                {
+                    "run_id": run_id,
+                    "worker_id": worker_id,
+                    "session_id": self.session_id,
+                    "inbox_id": row.id,
+                    "task_id": task.id,
+                },
+            )
             self._db.commit()
 
             terminal_status = await self._run_harness_turn(adapter, task, row)
@@ -155,18 +237,13 @@ class SessionActor:
                 self._post_terminal_event(task.id, failed_event)
                 self._post_progress(task.id, failed_event, row)
         finally:
-            stop_renewal.set()
-            await renewal_task
             if task is not None:
                 set_task_status(self._db, task.id, terminal_status)
             mark_inbox_done(self._db, row.id)
-            if _session_status(self._db, self.session_id) != "canceled":
-                _set_session_status(self._db, self.session_id, "idle")
-            release_session_lock(self._db, self.session_id, worker_id=worker_id)
             _append_event(
                 self._db,
                 self.session_id,
-                "worker.session.released",
+                "worker.turn.completed",
                 {
                     "run_id": run_id,
                     "worker_id": worker_id,
@@ -177,6 +254,45 @@ class SessionActor:
                 },
             )
             self._db.commit()
+
+    async def _adapter_for_turn(self, harness_id: str, resume_id: str | None) -> HarnessAdapter:
+        if harness_id in self._harness_sessions:
+            return self._harness_sessions[harness_id]
+        adapter = self._adapters[harness_id]
+        start_session = getattr(adapter, "start_session", None)
+        if start_session is None:
+            return adapter
+        session_adapter = await start_session(
+            session_id=self.session_id,
+            workspace=str(self._workspace),
+            recovery_context={"harness_resume_id": resume_id},
+        )
+        self._harness_sessions[harness_id] = session_adapter
+        _append_event(
+            self._db,
+            self.session_id,
+            "worker.harness.started",
+            {"harness_id": harness_id, "session_id": self.session_id},
+        )
+        self._post_terminal_line(f"session {self.session_id} harness {harness_id} started")
+        self._db.commit()
+        return session_adapter
+
+    async def _close_harness_sessions(self) -> None:
+        for harness_id, session_adapter in list(self._harness_sessions.items()):
+            close = getattr(session_adapter, "close", None)
+            if close is None:
+                continue
+            await close()
+            _append_event(
+                self._db,
+                self.session_id,
+                "worker.harness.closed",
+                {"harness_id": harness_id, "session_id": self.session_id},
+            )
+            self._post_terminal_line(f"session {self.session_id} harness {harness_id} closed")
+        self._harness_sessions.clear()
+        self._db.commit()
 
     async def _renew_session_lock_until_stopped(
         self,
@@ -479,6 +595,8 @@ class SessionManager:
         workspace: Path | None = None,
         event_output: EventOutput | None = None,
         max_workers: int = 7,
+        session_worker_idle_ttl_seconds: float = 0.0,
+        stop_when_idle: asyncio.Event | None = None,
     ) -> None:
         self.db_path = db_path
         self.db = connect(db_path)
@@ -488,10 +606,14 @@ class SessionManager:
         self.workspace = workspace or db_path.parent.parent
         self.progress = SlackProgressRenderer()
         self.event_output = event_output
-        self.actors: dict[str, SessionActor] = {}
+        self.workers: dict[str, SessionWorker] = {}
         self.max_workers = max(1, max_workers)
+        self.session_worker_idle_ttl_seconds = max(0.0, session_worker_idle_ttl_seconds)
+        self.stop_when_idle = stop_when_idle
         self.run_id = f"run_{uuid.uuid4().hex[:16]}"
-        self._running_workers: set[str] = set()
+        self._live_worker_ids: set[str] = set()
+        self._active_sessions: dict[str, asyncio.Task[None]] = {}
+        self._worker_sequence = 0
 
     def close(self) -> None:
         self.db.close()
@@ -508,9 +630,9 @@ class SessionManager:
             """
         ).fetchall()
         for row in rows:
-            self.actors.setdefault(
+            self.workers.setdefault(
                 row["id"],
-                SessionActor(
+                SessionWorker(
                     self.db,
                     row["id"],
                     adapters=self.adapters,
@@ -520,16 +642,12 @@ class SessionManager:
                     event_output=self.event_output,
                 ),
             )
-        return list(self.actors)
+        return list(self.workers)
 
     async def run_until_idle(self) -> None:
         self.recover_stale_work()
         self._emit_worker_heartbeat()
-        workers = [
-            asyncio.create_task(self._worker_loop(f"worker-{index + 1}"))
-            for index in range(self.max_workers)
-        ]
-        await asyncio.gather(*workers)
+        await self._run_session_workers_until_idle()
 
     def recover_stale_work(self) -> None:
         rows = self.db.execute(
@@ -593,47 +711,98 @@ class SessionManager:
                     "inbox_requeued": processing_inbox,
                 },
             )
-            if self.event_output is not None:
+            if self.event_output is not None and (running_tasks or processing_inbox):
                 self.event_output(
                     f"session {session_id} startup recovery: "
                     f"interrupted_tasks={len(running_tasks)} requeued_inbox={len(processing_inbox)}"
                 )
         self.db.commit()
 
-    async def _worker_loop(self, worker_id: str) -> None:
+    async def _run_session_workers_until_idle(self) -> None:
         while True:
-            row = claim_next_available_inbox_row(self.db, worker_id=worker_id)
-            self.db.commit()
-            if row is None:
-                if self._running_workers:
-                    await asyncio.sleep(0.01)
-                    continue
-                return
-            self._running_workers.add(worker_id)
-            self._emit_worker_heartbeat()
-            actor = SessionActor(
-                self.db,
-                row.session_id,
-                adapters=self.adapters,
-                slack=self.slack,
-                workspace=self.workspace,
-                progress=self.progress,
-                event_output=self.event_output,
-            )
-            try:
-                await actor.run_claimed_row(row, worker_id=worker_id, run_id=self.run_id)
-            finally:
-                self._running_workers.discard(worker_id)
+            scheduled = self._schedule_available_session_workers()
+            if scheduled:
+                await asyncio.sleep(0)
                 self._emit_worker_heartbeat()
+            if not self._active_sessions:
+                if not scheduled:
+                    return
+                continue
+            if scheduled and len(self._active_sessions) < self.max_workers:
+                continue
+
+            done, _ = await asyncio.wait(
+                self._active_sessions.values(),
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=0.01,
+            )
+            for task in done:
+                task.result()
+
+    def _schedule_available_session_workers(self) -> bool:
+        scheduled = False
+        capacity = self.max_workers - len(self._active_sessions)
+        for session_id in available_queued_session_ids(self.db):
+            if session_id in self._active_sessions:
+                self.workers[session_id].wake()
+                scheduled = True
+                continue
+            if capacity <= 0:
+                return scheduled
+            worker_id = self._next_worker_id()
+            worker = self.workers.setdefault(
+                session_id,
+                SessionWorker(
+                    self.db,
+                    session_id,
+                    adapters=self.adapters,
+                    slack=self.slack,
+                    workspace=self.workspace,
+                    progress=self.progress,
+                    event_output=self.event_output,
+                ),
+            )
+            task = asyncio.create_task(self._run_session_worker(worker, worker_id=worker_id))
+            self._active_sessions[session_id] = task
+            self._live_worker_ids.add(worker_id)
+            self.db.commit()
+            scheduled = True
+            capacity -= 1
+        return scheduled
+
+    async def _run_session_worker(self, worker: SessionWorker, *, worker_id: str) -> None:
+        try:
+            await worker.run_worker(
+                worker_id=worker_id,
+                run_id=self.run_id,
+                idle_ttl_seconds=self.session_worker_idle_ttl_seconds,
+                stop_when_idle=self.stop_when_idle,
+            )
+        finally:
+            self._active_sessions.pop(worker.session_id, None)
+            self._live_worker_ids.discard(worker_id)
+            self.workers.pop(worker.session_id, None)
+            self._emit_worker_heartbeat()
+
+    async def shutdown(self) -> None:
+        for worker in list(self.workers.values()):
+            worker.shutdown()
+        if not self._active_sessions:
+            return
+        await asyncio.gather(*self._active_sessions.values(), return_exceptions=True)
+
+    def _next_worker_id(self) -> str:
+        self._worker_sequence += 1
+        return f"worker-{self._worker_sequence}"
 
     def _emit_worker_heartbeat(self) -> None:
         if self.event_output is None:
             return
-        running = len(self._running_workers)
+        live = len(self._live_worker_ids)
         queued = self.db.execute(
-            "SELECT COUNT(*) AS count FROM session_inbox WHERE status = 'queued'"
+            "SELECT COUNT(DISTINCT session_id) AS count FROM session_inbox WHERE status = 'queued'"
         ).fetchone()["count"]
-        locked = self.db.execute(
+        active = self.db.execute(
             """
             SELECT COUNT(*) AS count
             FROM sessions
@@ -644,9 +813,10 @@ class SessionManager:
               )
             """
         ).fetchone()["count"]
+        warm = max(0, live - active)
         self.event_output(
-            f"workers: total={self.max_workers} idle={self.max_workers - running} "
-            f"running={running} queued={queued} locked_sessions={locked}"
+            f"workers: total={self.max_workers} capacity={self.max_workers - live} "
+            f"live={live} active={active} warm={warm} queued_sessions={queued}"
         )
 
 
@@ -713,3 +883,34 @@ def _preview_terminal(text: str, *, limit: int = 180) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
+
+
+def _event_is_set(event: asyncio.Event | None) -> bool:
+    return event is not None and event.is_set()
+
+
+async def _wait_for_wake_or_stop(
+    wake: asyncio.Event,
+    stop: asyncio.Event | None,
+    *,
+    timeout: float,
+) -> None:
+    if stop is None:
+        await asyncio.wait_for(wake.wait(), timeout=timeout)
+        return
+    wake_task = asyncio.create_task(wake.wait())
+    stop_task = asyncio.create_task(stop.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {wake_task, stop_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not done:
+            raise asyncio.TimeoutError
+        for task in pending:
+            task.cancel()
+    finally:
+        for task in (wake_task, stop_task):
+            if not task.done():
+                task.cancel()

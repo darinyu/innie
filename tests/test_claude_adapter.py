@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest import mock
 
-from innie.adapters.claude import ClaudeCliAdapter
+from innie.adapters.claude import ClaudeCliAdapter, ClaudeSessionAdapter
 from innie.harness import HarnessEvent, TaskRequest
 
 
@@ -78,6 +78,23 @@ def task_request(*, resume_id: str | None = None) -> TaskRequest:
 
 
 class ClaudeCliAdapterTest(unittest.TestCase):
+    def test_start_session_returns_session_scoped_adapter(self) -> None:
+        adapter = ClaudeCliAdapter()
+
+        async def run() -> ClaudeSessionAdapter:
+            return await adapter.start_session(
+                session_id="sess_1",
+                workspace="/tmp/work",
+                recovery_context={"harness_resume_id": "claude-session-1"},
+            )
+
+        session_adapter = asyncio.run(run())
+
+        self.assertIsInstance(session_adapter, ClaudeSessionAdapter)
+        self.assertEqual("sess_1", session_adapter.session_id)
+        self.assertEqual("/tmp/work", session_adapter.workspace)
+        self.assertEqual({"harness_resume_id": "claude-session-1"}, session_adapter.recovery_context)
+
     def test_default_spawn_pipes_prompt_and_uses_stream_json_print_mode(self) -> None:
         process = FakeProcess([])
 
@@ -233,6 +250,137 @@ class ClaudeCliAdapterTest(unittest.TestCase):
         events = asyncio.run(run())
 
         self.assertEqual([("failed", "Claude exited with status 1: wrapper warning; claude failed")], events)
+
+    def test_verbose_suppresses_ignored_system_hook_payloads(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "system",
+                    "subtype": "hook_response",
+                    "hook_event": "SessionStart",
+                    "output": "large startup context",
+                    "stdout": "secret stdout",
+                },
+            ]
+        )
+        diagnostics: list[str] = []
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = ClaudeCliAdapter(spawn=spawn, verbose=True, output=diagnostics.append)
+
+        async def run() -> None:
+            handle = await adapter.start_task(task_request())
+            async for _event in adapter.stream_events(handle.task_id):
+                pass
+
+        asyncio.run(run())
+
+        self.assertEqual([], diagnostics)
+
+    def test_verbose_suppresses_ignored_system_subagent_payloads(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "system",
+                    "subtype": "task_started",
+                    "subagent_type": "Explore",
+                    "task_id": "subtask_1",
+                    "description": "Deep research",
+                    "prompt": "large subagent prompt",
+                },
+                {
+                    "type": "system",
+                    "subtype": "task_progress",
+                    "subagent_type": "Explore",
+                    "task_id": "subtask_1",
+                    "description": "Reading file",
+                    "usage": {"total_tokens": 123},
+                },
+            ]
+        )
+        diagnostics: list[str] = []
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = ClaudeCliAdapter(spawn=spawn, verbose=True, output=diagnostics.append)
+
+        async def run() -> None:
+            handle = await adapter.start_task(task_request())
+            async for _event in adapter.stream_events(handle.task_id):
+                pass
+
+        asyncio.run(run())
+
+        self.assertEqual([], diagnostics)
+
+    def test_verbose_suppresses_ignored_assistant_thinking_payloads(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "thinking",
+                                "thinking": "private chain of thought",
+                                "signature": "signed-thinking-payload",
+                            }
+                        ]
+                    },
+                },
+            ]
+        )
+        diagnostics: list[str] = []
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = ClaudeCliAdapter(spawn=spawn, verbose=True, output=diagnostics.append)
+
+        async def run() -> None:
+            handle = await adapter.start_task(task_request())
+            async for _event in adapter.stream_events(handle.task_id):
+                pass
+
+        asyncio.run(run())
+
+        self.assertEqual([], diagnostics)
+
+    def test_verbose_redacts_unknown_ignored_payloads(self) -> None:
+        process = FakeProcess(
+            [
+                {
+                    "type": "mystery",
+                    "summary": "visible summary",
+                    "output": "large private context",
+                    "prompt": "large prompt context",
+                    "message": {"content": [{"signature": "signed-thinking-payload"}]},
+                },
+            ]
+        )
+        diagnostics: list[str] = []
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = ClaudeCliAdapter(spawn=spawn, verbose=True, output=diagnostics.append)
+
+        async def run() -> None:
+            handle = await adapter.start_task(task_request())
+            async for _event in adapter.stream_events(handle.task_id):
+                pass
+
+        asyncio.run(run())
+
+        output = "\n".join(diagnostics)
+        self.assertIn("claude task=task_1 event ignored: type=mystery", output)
+        self.assertIn('"summary":"visible summary"', output)
+        self.assertNotIn("large private context", output)
+        self.assertNotIn("large prompt context", output)
+        self.assertNotIn("signed-thinking-payload", output)
 
 
 if __name__ == "__main__":

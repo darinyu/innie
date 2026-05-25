@@ -31,6 +31,9 @@ class CodexCliAdapter:
         self._stderr_lines: dict[str, list[str]] = {}
         self._stderr_tasks: dict[str, asyncio.Task[None]] = {}
 
+    async def start_session(self, *, session_id: str, workspace: str, recovery_context: dict[str, Any]):
+        return CodexSessionAdapter(self, session_id=session_id, workspace=workspace, recovery_context=recovery_context)
+
     async def start_task(self, request: TaskRequest) -> TaskHandle:
         resume_id = request.recovery_context.get("harness_resume_id")
         if resume_id:
@@ -127,6 +130,42 @@ class CodexCliAdapter:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+
+
+class CodexSessionAdapter:
+    harness_id = "codex"
+    capabilities = CodexCliAdapter.capabilities
+
+    def __init__(
+        self,
+        adapter: CodexCliAdapter,
+        *,
+        session_id: str,
+        workspace: str,
+        recovery_context: dict[str, Any],
+    ) -> None:
+        self._adapter = adapter
+        self.session_id = session_id
+        self.workspace = workspace
+        self.recovery_context = dict(recovery_context)
+
+    async def start_task(self, request: TaskRequest) -> TaskHandle:
+        return await self._adapter.start_task(request)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        await self._adapter.send_input(task_id, input)
+
+    async def cancel_task(self, task_id: str) -> None:
+        await self._adapter.cancel_task(task_id)
+
+    def stream_events(self, task_id: str):
+        return self._adapter.stream_events(task_id)
+
+    async def collect_artifacts(self, task_id: str) -> list[HarnessArtifact]:
+        return await self._adapter.collect_artifacts(task_id)
+
+    async def close(self) -> None:
+        return None
 
 
 async def _write_prompt(process: asyncio.subprocess.Process, prompt: str) -> None:

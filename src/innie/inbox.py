@@ -106,15 +106,9 @@ def claim_next_inbox_row(db: sqlite3.Connection, session_id: str) -> InboxRow | 
     return _to_inbox_row(db.execute("SELECT * FROM session_inbox WHERE id = ?", (row["id"],)).fetchone())
 
 
-def claim_next_available_inbox_row(
-    db: sqlite3.Connection,
-    *,
-    worker_id: str,
-    lease_seconds: int = 120,
-) -> InboxRow | None:
-    row = db.execute(
-        """
-        SELECT i.*
+def available_queued_session_ids(db: sqlite3.Connection, *, limit: int | None = None) -> list[str]:
+    query = """
+        SELECT i.session_id, MIN(i.id) AS first_inbox_id
         FROM session_inbox i
         JOIN sessions s ON s.id = i.session_id
         WHERE i.status = 'queued'
@@ -123,47 +117,44 @@ def claim_next_available_inbox_row(
             OR s.lock_expires_at IS NULL
             OR s.lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           )
-        ORDER BY i.id ASC
-        LIMIT 1
-        """
-    ).fetchone()
-    if row is None:
-        return None
+        GROUP BY i.session_id
+        ORDER BY first_inbox_id ASC
+    """
+    params: tuple[int, ...] = ()
+    if limit is not None:
+        query += " LIMIT ?"
+        params = (limit,)
+    return [row["session_id"] for row in db.execute(query, params).fetchall()]
 
-    updated_session = db.execute(
-        """
-        UPDATE sessions
-        SET locked_by = ?,
-            locked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-            lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
-            status = 'running',
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?
-          AND (
-            locked_by IS NULL
-            OR lock_expires_at IS NULL
-            OR lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          )
-        """,
-        (worker_id, f"+{lease_seconds} seconds", row["session_id"]),
-    ).rowcount
-    if updated_session != 1:
-        return None
 
-    updated_inbox = db.execute(
-        """
-        UPDATE session_inbox
-        SET status = 'processing'
-        WHERE id = ? AND status = 'queued'
-        """,
-        (row["id"],),
-    ).rowcount
-    if updated_inbox != 1:
-        release_session_lock(db, row["session_id"], worker_id=worker_id)
-        return None
-
-    claimed = db.execute("SELECT * FROM session_inbox WHERE id = ?", (row["id"],)).fetchone()
-    return _to_inbox_row(claimed)
+def acquire_session_lock(
+    db: sqlite3.Connection,
+    session_id: str,
+    *,
+    worker_id: str,
+    lease_seconds: int = 120,
+) -> bool:
+    return (
+        db.execute(
+            """
+            UPDATE sessions
+            SET locked_by = ?,
+                locked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+                status = 'running',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?
+              AND (
+                locked_by IS NULL
+                OR locked_by = ?
+                OR lock_expires_at IS NULL
+                OR lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              )
+            """,
+            (worker_id, f"+{lease_seconds} seconds", session_id, worker_id),
+        ).rowcount
+        == 1
+    )
 
 
 def renew_session_lock(

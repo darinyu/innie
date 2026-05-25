@@ -106,9 +106,11 @@ class FrontendContractTest(unittest.TestCase):
         styles = APP_CSS.read_text(encoding="utf-8")
 
         self.assertIn('metric("Sessions", counts.sessions, "status", "all")', source)
-        self.assertIn('metric("Running", counts.running_sessions, "status", "running")', source)
-        self.assertIn('metric("Queued", counts.queued_inputs, "status", "queued")', source)
+        self.assertIn('metric("Active", counts.running_sessions, "status", "running")', source)
+        self.assertIn('metric("Queued", counts.queued_sessions, "status", "queued")', source)
         self.assertIn('metric("Failed", counts.failed_tasks, "status", "failed")', source)
+        self.assertNotIn('metric("Workers"', source)
+        self.assertNotIn('metric("Stale"', source)
         self.assertIn('segment("status", "queued", "Queued", state.filters.status)', source)
         self.assertRegex(source, r"function metric\(label, value, filter, filterValue\)")
         self.assertIn('data-filter-button="${escapeAttr(filter)}"', source)

@@ -159,10 +159,9 @@ function runsPage() {
     <p class="subtitle">Recent Innie sessions from the local durable store.</p>
     <div class="metrics">
       ${metric("Sessions", counts.sessions, "status", "all")}
-      ${metric("Running", counts.running_sessions, "status", "running")}
-      ${metric("Queued", counts.queued_inputs, "status", "queued")}
+      ${metric("Active", counts.running_sessions, "status", "running")}
+      ${metric("Queued", counts.queued_sessions, "status", "queued")}
       ${metric("Failed", counts.failed_tasks, "status", "failed")}
-      ${metric("Locked", counts.locked_sessions)}
     </div>
     <div class="toolbar">
       <div class="segmented" aria-label="Status filter">
@@ -233,6 +232,7 @@ function sessionDetailPanel() {
         ${meta("Output", session.output_target || "none")}
         ${meta("Slack thread", session.slack_thread_ts || session.slack_root_ts || "none")}
         ${meta("Lock", session.locked_by ? `${session.locked_by} until ${session.lock_expires_at || "unknown"}` : "none")}
+        ${meta("Worker", workerSummary(detail.worker))}
       </div>
       <div class="session-toolbar">
         <div class="tabs">
@@ -269,6 +269,9 @@ function sessionLoadingPanel() {
 
 function sessionSwitchRow(row, activeId) {
   const preview = row.latest_user_message || row.latest_task_goal || row.last_event_type || row.id;
+  const queue = Number(row.queued_inputs || 0);
+  const queueLabel = queue ? ` · ${queue} queued` : "";
+  const workerLabel = row.lock_state && row.lock_state !== "idle" ? ` · worker ${row.lock_state}` : "";
   return `
     <button class="session-switch-row ${row.id === activeId ? "active" : ""}" data-session="${escapeAttr(row.id)}">
       <span class="switch-row-top">
@@ -276,7 +279,7 @@ function sessionSwitchRow(row, activeId) {
         ${chip(sessionListStatus(row))}
       </span>
       <span class="switch-preview">${escapeHtml(preview)}</span>
-      <span class="switch-meta">${escapeHtml(row.harness_id || "none")} · ${formatTime(row.updated_at)}</span>
+      <span class="switch-meta">${escapeHtml(row.harness_id || "none")}${escapeHtml(queueLabel)}${escapeHtml(workerLabel)} · ${formatTime(row.updated_at)}</span>
     </button>
   `;
 }
@@ -289,6 +292,16 @@ function sessionListStatus(row) {
 function latestPrompt(detail) {
   const inbox = detail.inbox || [];
   return inbox.length ? inbox[inbox.length - 1].text : "";
+}
+
+function workerSummary(worker) {
+  if (!worker) return "none";
+  const parts = [worker.status || "idle"];
+  if (worker.lock_owner) parts.push(worker.lock_owner);
+  if (worker.queue_depth) parts.push(`${worker.queue_depth} queued`);
+  if (worker.current_task_id) parts.push(`task ${shortId(worker.current_task_id)}`);
+  if (worker.latest_event?.event_type) parts.push(worker.latest_event.event_type);
+  return parts.join(" · ");
 }
 
 function slackThreadLink(session) {

@@ -31,6 +31,9 @@ class ClaudeCliAdapter:
         self._stderr_lines: dict[str, list[str]] = {}
         self._stderr_tasks: dict[str, asyncio.Task[None]] = {}
 
+    async def start_session(self, *, session_id: str, workspace: str, recovery_context: dict[str, Any]):
+        return ClaudeSessionAdapter(self, session_id=session_id, workspace=workspace, recovery_context=recovery_context)
+
     async def start_task(self, request: TaskRequest) -> TaskHandle:
         resume_id = _resume_id(request.recovery_context)
         args = [
@@ -83,7 +86,7 @@ class ClaudeCliAdapter:
             if events:
                 for event in events:
                     yield event
-            elif self._verbose and self._output is not None:
+            elif self._verbose and self._output is not None and _should_log_ignored_event(payload):
                 self._output(_describe_ignored_event(task_id, payload))
         returncode = await process.wait()
         stderr_task = self._stderr_tasks.pop(task_id, None)
@@ -109,6 +112,42 @@ class ClaudeCliAdapter:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+
+
+class ClaudeSessionAdapter:
+    harness_id = "claude"
+    capabilities = ClaudeCliAdapter.capabilities
+
+    def __init__(
+        self,
+        adapter: ClaudeCliAdapter,
+        *,
+        session_id: str,
+        workspace: str,
+        recovery_context: dict[str, Any],
+    ) -> None:
+        self._adapter = adapter
+        self.session_id = session_id
+        self.workspace = workspace
+        self.recovery_context = dict(recovery_context)
+
+    async def start_task(self, request: TaskRequest) -> TaskHandle:
+        return await self._adapter.start_task(request)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        await self._adapter.send_input(task_id, input)
+
+    async def cancel_task(self, task_id: str) -> None:
+        await self._adapter.cancel_task(task_id)
+
+    def stream_events(self, task_id: str):
+        return self._adapter.stream_events(task_id)
+
+    async def collect_artifacts(self, task_id: str) -> list[HarnessArtifact]:
+        return await self._adapter.collect_artifacts(task_id)
+
+    async def close(self) -> None:
+        return None
 
 
 def _resume_id(recovery_context: dict[str, Any]) -> str | None:
@@ -228,4 +267,56 @@ def _tool_message(item: dict[str, Any]) -> str | None:
 def _describe_ignored_event(task_id: str, payload: dict[str, Any]) -> str:
     event_type = str(payload.get("type") or "unknown")
     keys = ", ".join(sorted(str(key) for key in payload.keys() if key not in {"chain_of_thought", "reasoning"}))
-    return f"claude task={task_id} event ignored: type={event_type} keys={keys} payload={_safe_json_preview(payload)}"
+    return f"claude task={task_id} event ignored: type={event_type} keys={keys} payload={_safe_json_preview(_redact_ignored_payload(payload))}"
+
+
+def _should_log_ignored_event(payload: dict[str, Any]) -> bool:
+    event_type = str(payload.get("type") or "")
+    if event_type == "system" and (payload.get("hook_event") or str(payload.get("subtype") or "").startswith("hook_")):
+        return False
+    if event_type == "system" and (payload.get("subagent_type") or payload.get("task_id")):
+        return False
+    if event_type in {"assistant", "user"} and not _has_visible_message_content(payload.get("message")):
+        return False
+    return True
+
+
+def _has_visible_message_content(message: Any) -> bool:
+    if not isinstance(message, dict):
+        return bool(_extract_text(message))
+    content = message.get("content")
+    if not isinstance(content, list):
+        return bool(_extract_text(message))
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "") in {"text", "tool_use", "tool_result"}:
+            return True
+    return False
+
+
+def _redact_ignored_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text in {
+                "additionalContext",
+                "chain_of_thought",
+                "output",
+                "prompt",
+                "reasoning",
+                "signature",
+                "stderr",
+                "stdout",
+                "thinking",
+            }:
+                redacted[key_text] = "<redacted>"
+            elif key_text == "content" and isinstance(item, list):
+                redacted[key_text] = [_redact_ignored_payload(entry) for entry in item]
+            else:
+                redacted[key_text] = _redact_ignored_payload(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_ignored_payload(item) for item in value]
+    return value
