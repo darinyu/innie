@@ -180,6 +180,10 @@ class ClaudeCliAdapterTest(unittest.TestCase):
         self.assertEqual(0.02, events[2].usage.cost_usd)
         self.assertEqual(("output", "final answer"), (events[3].type, events[3].message))
         self.assertEqual(("completed", "Claude completed."), (events[4].type, events[4].message))
+        self.assertEqual("phase", events[1].payload["_innie_phase"]["role"])
+        self.assertEqual("assistant", events[1].payload["_innie_phase"]["kind"])
+        self.assertEqual("working", events[1].payload["_innie_phase"]["title"])
+        self.assertEqual("final", events[3].payload["_innie_phase"]["role"])
 
     def test_maps_tool_use_content_to_tool_event(self) -> None:
         process = FakeProcess(

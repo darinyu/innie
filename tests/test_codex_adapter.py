@@ -167,6 +167,39 @@ class CodexCliAdapterTest(unittest.TestCase):
             events,
         )
 
+    def test_progress_and_output_events_include_dash_phase_metadata(self) -> None:
+        process = FakeProcess(
+            [
+                {"type": "reasoning_summary", "summary": "checking sources"},
+                {"type": "agent_message", "message": "final answer"},
+            ]
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="research CBRS",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[HarnessEvent]:
+            handle = await adapter.start_task(request)
+            return [event async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual("phase", events[0].payload["_innie_phase"]["role"])
+        self.assertEqual("reasoning", events[0].payload["_innie_phase"]["kind"])
+        self.assertEqual("Reasoning summary: checking sources", events[0].payload["_innie_phase"]["title"])
+        self.assertEqual("final", events[1].payload["_innie_phase"]["role"])
+
     def test_default_spawn_pipes_prompt_and_keeps_stderr_separate(self) -> None:
         process = FakeProcess([])
 

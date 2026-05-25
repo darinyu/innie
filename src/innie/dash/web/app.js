@@ -1,4 +1,5 @@
 const state = {
+  theme: "light",
   config: null,
   overview: null,
   sessions: [],
@@ -12,11 +13,14 @@ const state = {
   filters: { status: "all", harness: "all", search: "" },
   tab: "logs",
   expandedLogSections: new Set(),
+  expandedPhaseSections: new Set(),
   expandedLogEntries: new Set(),
   freshness: null,
   shellTimer: null,
   sessionTimer: null,
 };
+
+const THEME_STORAGE_KEY = "innie.dash.theme";
 
 const routes = [
   { id: "runs", label: "Runs", icon: "⌂", path: "/runs" },
@@ -27,6 +31,7 @@ window.addEventListener("popstate", routeChanged);
 document.addEventListener("DOMContentLoaded", start);
 
 async function start() {
+  initializeTheme();
   state.config = await api("/api/config");
   syncRouteSelection();
   await refresh();
@@ -89,6 +94,7 @@ function syncRouteSelection() {
   const nextSessionId = route.name === "runs" ? route.sessionId : null;
   if (state.selectedSessionId !== nextSessionId) {
     state.expandedLogSections.clear();
+    state.expandedPhaseSections.clear();
     state.expandedLogEntries.clear();
   }
   state.selectedSessionId = nextSessionId;
@@ -108,6 +114,7 @@ function render() {
             <span class="workspace">${escapeHtml(state.config?.workspace || "workspace loading")}</span>
           </div>
           <div class="topbar-right">
+            ${themeToggle()}
             <span class="utility-pill">read-only</span>
             <span class="freshness">${state.freshness ? `updated ${timeAgo(state.freshness)}` : "loading"}</span>
           </div>
@@ -117,6 +124,12 @@ function render() {
     </div>
   `;
   bind();
+}
+
+function initializeTheme() {
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  state.theme = storedTheme === "light" || storedTheme === "dark" ? storedTheme : "light";
+  document.documentElement.dataset.theme = state.theme;
 }
 
 function rail(route) {
@@ -322,10 +335,9 @@ function recordsTab(detail) {
 }
 
 function logsView(detail) {
-  const items = sessionLogItems(detail);
-  const groups = groupSessionLogItems(items);
+  const groups = sessionTurnGroups(detail);
   return `
-    <div class="timeline">${groups.map(logSectionCard).join("") || `<div class="empty">No log events.</div>`}</div>
+    <div class="timeline timeline-ledger">${groups.map(logSectionCard).join("") || `<div class="empty">No log events.</div>`}</div>
   `;
 }
 
@@ -343,6 +355,7 @@ function normalizeLogItem(row, eventType, source) {
   return {
     ...row,
     id: itemId,
+    row_id: row.id,
     source,
     event_type: eventType,
     payload,
@@ -350,103 +363,292 @@ function normalizeLogItem(row, eventType, source) {
   };
 }
 
-function groupSessionLogItems(items) {
-  const chronological = [...items].sort(
+function sessionTurnGroups(detail) {
+  const index = buildTurnIndex(detail);
+  const activity = createActivityGroup();
+
+  sessionLogItems(detail).forEach((item) => {
+    const group = turnGroupForItem(item, index);
+    if (group) {
+      group.items.push(item);
+      group.updated_at = maxTimestamp(group.updated_at, item.created_at);
+    } else {
+      activity.items.push(item);
+      activity.updated_at = maxTimestamp(activity.updated_at, item.created_at);
+    }
+  });
+
+  const groups = index.groups.map(finalizeTurnGroup);
+  if (activity.items.length) groups.push(finalizeActivityGroup(activity));
+  return groups
+    .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)) || String(a.id).localeCompare(String(b.id)))
+    .reverse();
+}
+
+function buildTurnIndex(detail) {
+  const groups = [];
+  const byInboxId = new Map();
+  const byTaskId = new Map();
+
+  [...(detail.inbox || [])]
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))
+    .forEach((row, index) => {
+      const group = createTurnGroup(row, index + 1);
+      groups.push(group);
+      byInboxId.set(String(row.id), group);
+    });
+
+  let activeGroup = null;
+  [...(detail.task_events || [])]
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))
+    .forEach((row) => {
+      const payload = row.payload || safeJson(row.payload_json) || {};
+      const inboxId = payload.inbox_id == null ? null : String(payload.inbox_id);
+      const taskId = row.task_id || payload.task_id;
+
+      if (row.event_type === "worker.inbox.claimed" && inboxId && byInboxId.has(inboxId)) {
+        activeGroup = byInboxId.get(inboxId);
+      }
+      if (inboxId && byInboxId.has(inboxId) && taskId) {
+        connectTaskToGroup(taskId, byInboxId.get(inboxId), byTaskId);
+      }
+      if (taskId && activeGroup && !byTaskId.has(String(taskId))) {
+        connectTaskToGroup(taskId, activeGroup, byTaskId);
+      }
+      if (row.event_type === "worker.session.released") {
+        activeGroup = null;
+      }
+    });
+
+  [...(detail.tasks || [])]
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))
+    .forEach((task, index) => {
+      if (!byTaskId.has(String(task.id)) && groups[index]) {
+        connectTaskToGroup(task.id, groups[index], byTaskId);
+      }
+    });
+
+  return { groups, byInboxId, byTaskId };
+}
+
+function connectTaskToGroup(taskId, group, byTaskId) {
+  if (!taskId || !group) return;
+  const key = String(taskId);
+  byTaskId.set(key, group);
+  group.taskIds.add(key);
+}
+
+function turnGroupForItem(item, index) {
+  if (item.source === "inbox" && item.row_id != null) {
+    return index.byInboxId.get(String(item.row_id));
+  }
+  if (item.payload.inbox_id != null) {
+    const group = index.byInboxId.get(String(item.payload.inbox_id));
+    if (group) return group;
+  }
+  if (item.task_id) {
+    const group = index.byTaskId.get(String(item.task_id));
+    if (group) return group;
+  }
+  if (item.payload.task_id) {
+    const group = index.byTaskId.get(String(item.payload.task_id));
+    if (group) return group;
+  }
+  return null;
+}
+
+function createTurnGroup(row, turnNumber) {
+  const prompt = row.text || "Slack reply";
+  return {
+    id: `turn:${row.id}`,
+    title: `Reply ${turnNumber}`,
+    summary: prompt,
+    prompt,
+    turnNumber,
+    started_at: row.created_at,
+    updated_at: row.processed_at || row.created_at,
+    taskIds: new Set(),
+    items: [],
+  };
+}
+
+function finalizeTurnGroup(group) {
+  const finalOutput = [...group.items]
+    .filter((item) => ["harness.output", "harness.failed", "harness.canceled"].includes(item.event_type))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)))[0];
+  if (finalOutput?.message) {
+    group.summary = finalOutput.message;
+  }
+  group.phases = turnPhaseGroups(group);
+  group.items.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  return group;
+}
+
+function turnPhaseGroups(group) {
+  const chronological = [...group.items].sort(
     (a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)),
   );
-  const groups = [];
+  const phases = [];
   let current = null;
 
   chronological.forEach((item) => {
-    if (item.event_type === "harness.progress") {
-      if (current) groups.push(current);
-      current = createProgressGroup(item);
+    const role = phaseRole(item);
+    if (role === "phase" || item.event_type === "harness.progress") {
+      current = createPhaseGroup(phaseTitle(item), item);
+      phases.push(current);
+      current.items.push(item);
+      current.updated_at = maxTimestamp(current.updated_at, item.created_at);
       return;
     }
-    if (!current) current = createActivityGroup(item);
+    if (role === "final" || ["harness.output", "harness.failed", "harness.canceled"].includes(item.event_type)) {
+      current = createPhaseGroup("Final answer", item);
+      phases.push(current);
+      current.items.push(item);
+      current.updated_at = maxTimestamp(current.updated_at, item.created_at);
+      return;
+    }
+    if (!current) {
+      current = createFallbackPhaseGroup("Work", item);
+      phases.push(current);
+    }
     current.items.push(item);
     current.updated_at = maxTimestamp(current.updated_at, item.created_at);
   });
 
-  if (current) groups.push(current);
-  groups.forEach((group, index) => {
-    group.step = group.progress ? index + 1 : null;
-    group.items.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  phases.forEach((phase) => {
+    phase.items.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
   });
-  return groups.reverse();
+  return phases.reverse();
 }
 
-function createProgressGroup(item) {
-  const summary = item.message || "Progress update";
+function phaseRole(item) {
+  return item.payload?._innie_phase?.role || "";
+}
+
+function phaseTitle(item) {
+  return item.payload?._innie_phase?.title || item.message || "Progress update";
+}
+
+function createPhaseGroup(title, item) {
   return {
-    id: item.id,
-    title: summary,
-    summary,
+    id: `phase:${item.id}`,
+    title,
     started_at: item.created_at,
     updated_at: item.created_at,
-    progress: item,
     items: [],
   };
 }
 
-function createActivityGroup(item) {
+function createFallbackPhaseGroup(title, item) {
+  return createPhaseGroup(title, item);
+}
+
+function finalizeActivityGroup(group) {
+  group.items.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  return group;
+}
+
+function createActivityGroup() {
   return {
-    id: `activity:${item.id}`,
+    id: "activity",
     title: "Session activity",
-    summary: "Events before the first progress update.",
-    started_at: item.created_at,
-    updated_at: item.created_at,
-    progress: null,
+    summary: "Events not tied to a specific Slack reply.",
+    started_at: "",
+    updated_at: "",
     items: [],
   };
+}
+
+function groupSessionLogItems(items) {
+  const group = createActivityGroup();
+  items.forEach((item) => {
+    group.items.push(item);
+    if (!group.started_at || String(item.created_at).localeCompare(String(group.started_at)) < 0) {
+      group.started_at = item.created_at;
+    }
+    group.updated_at = maxTimestamp(group.updated_at, item.created_at);
+  });
+  return group.items.length ? [finalizeActivityGroup(group)].reverse() : [];
 }
 
 function logSectionCard(group) {
-  const count = group.items.length + (group.progress ? 1 : 0);
-  const title = group.step ? `Step ${group.step}: ${group.title}` : group.title;
-  const expanded = isLogSectionExpanded(group.id) ? " open" : "";
+  const count = group.items.length;
+  const title = group.title;
+  const expanded = isLogSectionExpanded(group.id);
   const eventLabel = count === 1 ? "1 event" : `${count} events`;
   return `
-    <details class="phase-card log-section" data-log-section="${escapeAttr(group.id)}"${expanded}>
-      <summary class="log-section-head">
-        <span class="section-chevron">›</span>
-        <span class="log-section-copy">
-          <span class="log-section-title">${escapeHtml(title)}</span>
-          <span class="log-section-summary">${escapeHtml(group.summary)}</span>
-        </span>
+    <section class="log-section ${expanded ? "open" : ""}" data-log-section="${escapeAttr(group.id)}">
+      <button class="log-section-head ledger-row" data-log-section-toggle="${escapeAttr(group.id)}" aria-expanded="${expanded ? "true" : "false"}">
+        <span class="log-section-title">${escapeHtml(title)}</span>
+        <span class="log-section-summary">${escapeHtml(group.summary)}</span>
         <span class="log-section-meta">${escapeHtml(eventLabel)} · ${formatTime(group.updated_at)}</span>
-      </summary>
-      <div class="log-section-items">
-        ${group.items.map(logEntryCard).join("") || `<div class="empty compact">No detailed events in this step.</div>`}
+        <span class="ledger-action">${expanded ? "[CLOSE]" : "[OPEN]"}</span>
+      </button>
+      <div class="log-section-items ${expanded ? "" : "hidden"}">
+        ${group.phases ? group.phases.map(phaseSectionCard).join("") : group.items.map(logEntryCard).join("") || `<div class="empty compact">No detailed events in this step.</div>`}
       </div>
-    </details>
+    </section>
+  `;
+}
+
+function phaseSectionCard(phase) {
+  const count = phase.items.length;
+  const eventLabel = count === 1 ? "1 event" : `${count} events`;
+  const expanded = isPhaseSectionExpanded(phase.id);
+  return `
+    <section class="phase-section ${expanded ? "open" : ""}" data-phase-section="${escapeAttr(phase.id)}">
+      <button class="phase-section-head ledger-row" data-phase-section-toggle="${escapeAttr(phase.id)}" aria-expanded="${expanded ? "true" : "false"}">
+        <span class="phase-kind">${escapeHtml(phaseKind(phase))}</span>
+        <span class="phase-title">${escapeHtml(phase.title)}</span>
+        <span class="phase-meta">${escapeHtml(eventLabel)} · ${formatTime(phase.updated_at)}</span>
+        <span class="ledger-action">${expanded ? "[HIDE]" : "[DETAILS]"}</span>
+      </button>
+      <div class="phase-section-items ${expanded ? "" : "hidden"}">
+        ${phase.items.map(logEntryCard).join("")}
+      </div>
+    </section>
   `;
 }
 
 function logEntryCard(item) {
-  const expanded = isLogEntryExpanded(item.id) ? " open" : "";
+  const expanded = isLogEntryExpanded(item.id);
   const message = item.message || item.event_type || "Event";
   return `
     <div class="event log-entry">
       <span class="event-type">${escapeHtml(item.event_type || "event")}</span>
-      <details data-log-entry="${escapeAttr(item.id)}"${expanded}>
-        <summary class="log-entry-summary">
+      <div class="log-entry-body" data-log-entry="${escapeAttr(item.id)}">
+        <button class="log-entry-summary" data-log-entry-toggle="${escapeAttr(item.id)}" aria-expanded="${expanded ? "true" : "false"}">
           <span class="entry-text">${escapeHtml(message)}</span>
-          <span class="entry-action">more</span>
-        </summary>
+          <span class="ledger-action entry-action">${expanded ? "[HIDE]" : "[DETAILS]"}</span>
+        </button>
+        <div class="log-entry-detail ${expanded ? "" : "hidden"}">
         <div class="event-message">${escapeHtml(message)}</div>
         <div class="event-head">
           <span>${escapeHtml(item.source)}</span>
           <span>${formatTime(item.created_at)}</span>
         </div>
         <pre class="expanded-payload">${escapeHtml(JSON.stringify(item.payload, null, 2))}</pre>
-      </details>
+        </div>
+      </div>
     </div>
   `;
 }
 
+function phaseKind(phase) {
+  const first = phase.items[0];
+  if (!first) return "Phase";
+  if (first.event_type === "harness.progress") return "Progress";
+  if (["harness.output", "harness.failed", "harness.canceled"].includes(first.event_type)) return "Output";
+  if (first.event_type?.includes("tool")) return "Tool use";
+  return "Work";
+}
+
 function isLogSectionExpanded(id) {
   return state.expandedLogSections.has(id);
+}
+
+function isPhaseSectionExpanded(id) {
+  return state.expandedPhaseSections.has(id);
 }
 
 function isLogEntryExpanded(id) {
@@ -480,7 +682,19 @@ function systemPage() {
   `;
 }
 
+function themeToggle() {
+  return `
+    <button class="theme-toggle" data-toggle-theme aria-label="Switch to ${state.theme === "dark" ? "light" : "dark"} mode">
+      <span class="${state.theme === "light" ? "active" : ""}">Light</span>
+      <span class="${state.theme === "dark" ? "active" : ""}">Dark</span>
+    </button>
+  `;
+}
+
 function bind() {
+  document.querySelectorAll("[data-toggle-theme]").forEach((button) => {
+    button.addEventListener("click", toggleTheme);
+  });
   document.querySelectorAll("[data-route]").forEach((button) => {
     button.addEventListener("click", () => navigate(button.dataset.route));
   });
@@ -511,16 +725,31 @@ function bind() {
       render();
     });
   });
-  document.querySelectorAll("[data-log-section]").forEach((section) => {
-    section.addEventListener("toggle", () => {
-      setExpanded(state.expandedLogSections, section.dataset.logSection, section.open);
+  document.querySelectorAll("[data-log-section-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleExpanded(state.expandedLogSections, button.dataset.logSectionToggle);
+      render();
     });
   });
-  document.querySelectorAll("[data-log-entry]").forEach((entry) => {
-    entry.addEventListener("toggle", () => {
-      setExpanded(state.expandedLogEntries, entry.dataset.logEntry, entry.open);
+  document.querySelectorAll("[data-phase-section-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleExpanded(state.expandedPhaseSections, button.dataset.phaseSectionToggle);
+      render();
     });
   });
+  document.querySelectorAll("[data-log-entry-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleExpanded(state.expandedLogEntries, button.dataset.logEntryToggle);
+      render();
+    });
+  });
+}
+
+function toggleTheme() {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = state.theme;
+  window.localStorage.setItem(THEME_STORAGE_KEY, state.theme);
+  render();
 }
 
 async function updateFilter(event) {
@@ -554,6 +783,7 @@ async function selectSession(sessionId, { updateUrl = true } = {}) {
   if (!sessionId) return;
   if (state.selectedSessionId !== sessionId) {
     state.expandedLogSections.clear();
+    state.expandedPhaseSections.clear();
     state.expandedLogEntries.clear();
   }
   state.selectedSessionId = sessionId;
@@ -678,6 +908,11 @@ function setExpanded(set, key, expanded) {
   } else {
     set.delete(key);
   }
+}
+
+function toggleExpanded(set, key) {
+  if (!key) return;
+  setExpanded(set, key, !set.has(key));
 }
 
 function tableRows(rows, keys) {
