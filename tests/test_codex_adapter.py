@@ -7,6 +7,10 @@ from unittest import mock
 
 from innie.adapters.codex import CodexCliAdapter, CodexSessionAdapter
 from innie.harness import TaskRequest
+from innie.prompts import load_harness_system_prompt
+
+
+SYSTEM_PROMPT_ARG = f"developer_instructions={json.dumps(load_harness_system_prompt())}"
 
 
 class FakeProcess:
@@ -106,7 +110,7 @@ class CodexCliAdapterTest(unittest.TestCase):
         asyncio.run(run())
 
         self.assertEqual(
-            ("codex", "exec", "resume", "--json", "019e-thread", "-"),
+            ("codex", "exec", "resume", "--json", "-c", SYSTEM_PROMPT_ARG, "019e-thread", "-"),
             calls[0][0],
         )
         self.assertEqual("/tmp/work", calls[0][1])
@@ -236,6 +240,8 @@ class CodexCliAdapterTest(unittest.TestCase):
                 )
 
             self.assertEqual("-", spawn.call_args.args[-1])
+            self.assertIn("-c", spawn.call_args.args)
+            self.assertIn(SYSTEM_PROMPT_ARG, spawn.call_args.args)
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stdin"])
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stdout"])
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stderr"])

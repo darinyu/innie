@@ -45,6 +45,7 @@ Issues = "https://github.com/darinyu/innie/issues"
 packages = ["src/innie"]
 artifacts = [
     "src/innie/dash/web/**",
+    "src/innie/prompts/*.md",
 ]
 
 [tool.hatch.build.targets.sdist]
