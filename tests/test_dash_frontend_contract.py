@@ -5,6 +5,7 @@ from pathlib import Path
 
 APP_JS = Path(__file__).resolve().parents[1] / "src" / "innie" / "dash" / "web" / "app.js"
 APP_CSS = Path(__file__).resolve().parents[1] / "src" / "innie" / "dash" / "web" / "styles.css"
+APP_HTML = Path(__file__).resolve().parents[1] / "src" / "innie" / "dash" / "web" / "index.html"
 
 
 class FrontendContractTest(unittest.TestCase):
@@ -28,16 +29,45 @@ class FrontendContractTest(unittest.TestCase):
         self.assertNotIn("log-explainer", source)
         self.assertNotIn("log-advice", source)
 
-    def test_session_logs_group_progress_into_folded_sections(self) -> None:
+    def test_session_logs_group_turns_into_folded_sections(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
 
-        self.assertIn("function groupSessionLogItems(items)", source)
-        self.assertIn('item.event_type === "harness.progress"', source)
-        self.assertIn("groups.reverse()", source)
-        self.assertIn('class="phase-card', source)
+        self.assertIn("function sessionTurnGroups(detail)", source)
+        self.assertIn("function createTurnGroup(row, turnNumber)", source)
+        self.assertIn(".reverse();", source)
         self.assertIn("isLogSectionExpanded(group.id)", source)
         self.assertIn("expandedLogSections: new Set()", source)
         self.assertIn("data-log-section", source)
+
+    def test_session_logs_group_replies_by_turn(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("function sessionTurnGroups(detail)", source)
+        self.assertIn("buildTurnIndex(detail)", source)
+        self.assertIn("item.payload.inbox_id", source)
+        self.assertIn("item.task_id", source)
+        self.assertIn('title: `Reply ${turnNumber}`', source)
+        self.assertIn("finalOutput", source)
+
+    def test_session_logs_group_turn_events_into_phase_sections(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("function turnPhaseGroups(group)", source)
+        self.assertIn("function phaseRole(item)", source)
+        self.assertIn('_innie_phase', source)
+        self.assertIn('item.event_type === "harness.progress"', source)
+        self.assertIn('createFallbackPhaseGroup("Work", item)', source)
+        self.assertIn("phase-section", source)
+        self.assertIn("phase.items.map(logEntryCard)", source)
+        self.assertIn("phases.reverse()", source)
+
+    def test_phase_sections_preserve_expansion_across_refreshes(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("expandedPhaseSections: new Set()", source)
+        self.assertIn("isPhaseSectionExpanded(phase.id)", source)
+        self.assertIn("data-phase-section", source)
+        self.assertIn("state.expandedPhaseSections", source)
 
     def test_session_log_entries_truncate_and_expand_independently(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
@@ -53,7 +83,6 @@ class FrontendContractTest(unittest.TestCase):
         source = APP_CSS.read_text(encoding="utf-8")
 
         self.assertRegex(source, r"\.event\s*\{[^}]*grid-template-columns:\s*minmax\(120px,\s*128px\)\s+minmax\(0,\s*1fr\)")
-        self.assertRegex(source, r"\.log-entry\s+details\s*\{[^}]*overflow:\s*hidden")
         self.assertRegex(source, r"\.log-entry-summary\s*\{[^}]*min-width:\s*0")
         self.assertRegex(source, r"\.event-type\s*\{[^}]*overflow:\s*hidden")
         self.assertRegex(source, r"\.event-message\s*\{[^}]*overflow-wrap:\s*anywhere")
@@ -116,6 +145,61 @@ class FrontendContractTest(unittest.TestCase):
         self.assertNotIn("function eventsPage()", source)
         self.assertNotIn("function healthPage()", source)
         self.assertNotIn("function settingsPage()", source)
+
+    def test_dash_loads_nothing_fonts(self) -> None:
+        source = APP_HTML.read_text(encoding="utf-8")
+
+        self.assertIn("fonts.googleapis.com", source)
+        self.assertIn("fonts.gstatic.com", source)
+        self.assertIn("family=Doto", source)
+        self.assertIn("family=Space+Grotesk", source)
+        self.assertIn("family=Space+Mono", source)
+
+    def test_dash_has_persistent_light_dark_theme_toggle(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn('theme: "light"', source)
+        self.assertIn('const THEME_STORAGE_KEY = "innie.dash.theme"', source)
+        self.assertIn("function initializeTheme()", source)
+        self.assertIn("window.localStorage.getItem(THEME_STORAGE_KEY)", source)
+        self.assertIn('storedTheme === "light" || storedTheme === "dark" ? storedTheme : "light"', source)
+        self.assertIn('document.documentElement.dataset.theme = state.theme', source)
+        self.assertIn("function themeToggle()", source)
+        self.assertIn("data-toggle-theme", source)
+        self.assertIn("function toggleTheme()", source)
+        self.assertIn("window.localStorage.setItem(THEME_STORAGE_KEY, state.theme)", source)
+
+    def test_dash_uses_nothing_design_tokens(self) -> None:
+        source = APP_CSS.read_text(encoding="utf-8")
+
+        self.assertIn("--black: #000000", source)
+        self.assertIn("--paper: #f5f5f5", source)
+        self.assertIn("--accent: #d71921", source)
+        self.assertIn("--font-display: Doto", source)
+        self.assertIn("--font-ui: \"Space Grotesk\"", source)
+        self.assertIn("--font-mono: \"Space Mono\"", source)
+        self.assertIn("[data-theme=\"light\"]", source)
+        self.assertIn("[data-theme=\"dark\"]", source)
+        self.assertNotIn("#2563eb", source)
+
+    def test_timeline_uses_ledger_buttons_not_native_disclosure_arrows(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+        styles = APP_CSS.read_text(encoding="utf-8")
+
+        self.assertNotIn("<details", source)
+        self.assertNotIn("<summary", source)
+        self.assertNotIn("section-chevron", source)
+        self.assertIn("data-log-section-toggle", source)
+        self.assertIn("data-phase-section-toggle", source)
+        self.assertIn("data-log-entry-toggle", source)
+        self.assertIn("ledger-action", source)
+        self.assertIn("[OPEN]", source)
+        self.assertIn("[CLOSE]", source)
+        self.assertIn("[DETAILS]", source)
+        self.assertIn("[HIDE]", source)
+        self.assertIn(".timeline-ledger", styles)
+        self.assertIn(".ledger-action", styles)
+        self.assertNotIn("border-radius: var(--radius)", styles)
 
 
 if __name__ == "__main__":

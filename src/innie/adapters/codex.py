@@ -86,7 +86,7 @@ class CodexCliAdapter:
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
-                yield HarnessEvent(type="progress", message=line)
+                yield HarnessEvent(type="progress", message=line, payload=_phase_payload({"message": line}, role="phase", kind="progress", title=line))
                 continue
             event = _map_codex_event(payload)
             if event is not None:
@@ -167,17 +167,23 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
         return None
     if event_type in {"agent_message_delta", "exec_command_begin", "exec_command_output_delta"}:
         message = payload.get("delta") or payload.get("message") or payload.get("command")
-        return HarnessEvent(type="progress", message=str(message) if message else None, payload=payload)
+        title = str(message) if message else "Codex progress"
+        return HarnessEvent(type="progress", message=title, payload=_phase_payload(payload, role="phase", kind="assistant", title=title))
     if event_type in {"reasoning_summary_delta", "reasoning_summary"}:
         message = _extract_text(payload.get("delta") or payload.get("summary") or payload.get("message"))
         return HarnessEvent(
             type="progress",
             message=f"Reasoning summary: {message}" if message else "Reasoning summary updated.",
-            payload=payload,
+            payload=_phase_payload(
+                payload,
+                role="phase",
+                kind="reasoning",
+                title=f"Reasoning summary: {message}" if message else "Reasoning summary updated.",
+            ),
         )
     if event_type in {"agent_message", "final_message", "run.completed"}:
         message = _extract_text(payload.get("message") or payload.get("text") or payload.get("last_message"))
-        return HarnessEvent(type="output", message=str(message) if message else None, payload=payload)
+        return HarnessEvent(type="output", message=str(message) if message else None, payload=_phase_payload(payload, role="final", kind="output"))
     if event_type in {"item.completed", "response.output_item.done"}:
         item = payload.get("item") or payload.get("output_item") or payload
         tool_event = _map_tool_item(item)
@@ -186,7 +192,7 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
         if isinstance(item, dict) and (item.get("role") == "assistant" or item.get("type") in {"agent_message", "assistant_message", "message"}):
             message = _extract_text(item)
             if message:
-                return HarnessEvent(type="output", message=message, payload=payload)
+                return HarnessEvent(type="output", message=message, payload=_phase_payload(payload, role="final", kind="output"))
     if event_type in {"item.started", "response.output_item.added"}:
         item = payload.get("item") or payload.get("output_item") or payload
         tool_event = _map_tool_item(item)
@@ -208,7 +214,7 @@ def _map_codex_event(payload: dict[str, Any]) -> HarnessEvent | None:
                 cache_write_tokens=int(usage.get("cache_write_tokens", 0) or usage.get("cache_write_input_tokens", 0) or 0),
                 cost_usd=usage.get("cost_usd"),
             ),
-            payload=payload,
+            payload=_phase_payload(payload, role="item", kind="usage"),
         )
     if event_type == "session.finished":
         return None
@@ -232,7 +238,11 @@ def _is_assistant_output_payload(payload: dict[str, Any]) -> bool:
 
 
 def _output_as_progress(event: HarnessEvent) -> HarnessEvent:
-    return HarnessEvent(type="progress", message=event.message, payload=event.payload)
+    return HarnessEvent(
+        type="progress",
+        message=event.message,
+        payload=_phase_payload(event.payload, role="phase", kind="assistant", title=event.message or "Assistant progress"),
+    )
 
 
 def _map_tool_item(item: Any) -> HarnessEvent | None:
@@ -247,8 +257,17 @@ def _map_tool_item(item: Any) -> HarnessEvent | None:
     return HarnessEvent(
         type=event_type,
         message=message or tool_name,
-        payload={"tool_name": tool_name, "item_type": item_type},
+        payload=_phase_payload({"tool_name": tool_name, "item_type": item_type}, role="item", kind=event_type),
     )
+
+
+def _phase_payload(payload: dict[str, Any], *, role: str, kind: str, title: str | None = None) -> dict[str, Any]:
+    event_payload = dict(payload)
+    phase = {"role": role, "kind": kind}
+    if title:
+        phase["title"] = title
+    event_payload["_innie_phase"] = phase
+    return event_payload
 
 
 def _looks_like_tool(item_type: str, item: dict[str, Any]) -> bool:

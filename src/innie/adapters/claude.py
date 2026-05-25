@@ -138,7 +138,7 @@ def _map_claude_events(payload: dict[str, Any]) -> list[HarnessEvent]:
             events.append(_usage_event(usage, payload))
         message = _extract_text(payload.get("result"))
         if message:
-            events.append(HarnessEvent(type="output", message=message, payload=payload))
+            events.append(HarnessEvent(type="output", message=message, payload=_phase_payload(payload, role="final", kind="output")))
         return events
     return []
 
@@ -165,7 +165,7 @@ def _map_message_content(message: Any, *, payload: dict[str, Any]) -> list[Harne
                 HarnessEvent(
                     type="tool_use",
                     message=_tool_message(item),
-                    payload={"tool_name": str(item.get("name") or "tool"), "item_type": item_type},
+                    payload=_phase_payload({"tool_name": str(item.get("name") or "tool"), "item_type": item_type}, role="item", kind="tool_use"),
                 )
             )
         elif item_type == "tool_result":
@@ -173,11 +173,12 @@ def _map_message_content(message: Any, *, payload: dict[str, Any]) -> list[Harne
                 HarnessEvent(
                     type="tool_result",
                     message=_extract_text(item.get("content")) or _tool_message(item),
-                    payload={"tool_name": str(item.get("tool_use_id") or "tool"), "item_type": item_type},
+                    payload=_phase_payload({"tool_name": str(item.get("tool_use_id") or "tool"), "item_type": item_type}, role="item", kind="tool_result"),
                 )
             )
     if text_parts:
-        events.insert(0, HarnessEvent(type="progress", message="\n".join(text_parts), payload=payload))
+        title = "\n".join(text_parts)
+        events.insert(0, HarnessEvent(type="progress", message=title, payload=_phase_payload(payload, role="phase", kind="assistant", title=title)))
     return events
 
 
@@ -199,8 +200,17 @@ def _usage_event(usage: dict[str, Any], payload: dict[str, Any]) -> HarnessEvent
             cache_write_tokens=cache_write_tokens,
             cost_usd=usage.get("cost_usd") or payload.get("total_cost_usd"),
         ),
-        payload=payload,
+        payload=_phase_payload(payload, role="item", kind="usage"),
     )
+
+
+def _phase_payload(payload: dict[str, Any], *, role: str, kind: str, title: str | None = None) -> dict[str, Any]:
+    event_payload = dict(payload)
+    phase = {"role": role, "kind": kind}
+    if title:
+        phase["title"] = title
+    event_payload["_innie_phase"] = phase
+    return event_payload
 
 
 def _tool_message(item: dict[str, Any]) -> str | None:
