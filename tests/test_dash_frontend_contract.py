@@ -122,10 +122,31 @@ class FrontendContractTest(unittest.TestCase):
     def test_session_switcher_badge_shows_failed_task_status(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
 
-        self.assertIn("${chip(sessionListStatus(row))}", source)
+        self.assertIn('pending ? spinner("Loading session") : chip(sessionListStatus(row))', source)
         self.assertIn("function sessionListStatus(row)", source)
         self.assertIn('if (row.latest_task_status === "failed") return "failed";', source)
         self.assertIn("return row.status;", source)
+
+    def test_open_slack_uses_workspace_neutral_redirect(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("https://slack.com/app_redirect?", source)
+        self.assertIn('params.set("channel", channel)', source)
+        self.assertIn('params.set("message_ts", rootTs)', source)
+        self.assertNotIn("/archives/", source)
+
+    def test_slow_session_actions_show_pending_indicators(self) -> None:
+        source = APP_JS.read_text(encoding="utf-8")
+        styles = APP_CSS.read_text(encoding="utf-8")
+
+        self.assertIn("pendingSessionId: null", source)
+        self.assertIn("pendingToggleId: null", source)
+        self.assertIn("function spinner(label)", source)
+        self.assertIn("async function runWithPendingToggle", source)
+        self.assertIn("await nextFrame()", source)
+        self.assertIn("aria-busy", source)
+        self.assertIn(".spinner", styles)
+        self.assertIn("@keyframes spin", styles)
 
     def test_left_rail_only_exposes_runs_and_system_with_innie_icon(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
