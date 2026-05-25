@@ -7,7 +7,7 @@ import json
 
 from ..harness import HarnessArtifact, HarnessCapabilities, HarnessEvent, TaskHandle, TaskRequest, TokenUsage
 from ..prompts import load_harness_system_prompt
-from ..slack_mcp_config import claude_slack_mcp_config_path, slack_mcp_process_env
+from ..slack_mcp_config import slack_mcp_config_path, slack_mcp_process_env
 from .codex import _drain_stderr, _extract_text, _safe_json_preview, _stderr_summary, _write_prompt
 
 
@@ -51,12 +51,12 @@ class ClaudeCliAdapter:
             "--append-system-prompt",
             load_harness_system_prompt(),
         ]
-        mcp_config_path = claude_slack_mcp_config_path(request.workspace)
+        mcp_config_path = slack_mcp_config_path(request.workspace)
         if mcp_config_path is not None:
             args.extend(["--mcp-config", mcp_config_path])
         if resume_id is not None:
             args.extend(["--resume", resume_id])
-        env = slack_mcp_process_env(request.workspace)
+        env = slack_mcp_process_env(request.workspace, request.recovery_context)
         if env is None:
             process = await self._spawn(*args, cwd=request.workspace)
         else:

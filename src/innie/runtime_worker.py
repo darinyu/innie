@@ -202,7 +202,7 @@ class SessionWorker:
         task: TaskRecord | None = None
         terminal_status = "failed"
         try:
-            goal = self._goal_for_row(row)
+            goal = self._goal_for_row(row, harness_id=harness_id)
             task = create_task(
                 self._db,
                 session_id=self.session_id,
@@ -330,9 +330,10 @@ class SessionWorker:
                 )
                 self._db.commit()
 
-    def _goal_for_row(self, row) -> str:
+    def _goal_for_row(self, row, *, harness_id: str) -> str:
         records = list_files_for_inbox(self._db, session_id=row.session_id, slack_event_id=row.slack_event_id)
-        return build_goal_with_files(row.text, records)
+        goal = _goal_with_slack_context(row) if harness_id in {"codex", "claude"} else row.text
+        return build_goal_with_files(goal, records)
 
     async def _run_harness_turn(self, adapter: HarnessAdapter, task: TaskRecord, row) -> str:
         start_event = HarnessEvent(type="started")
@@ -355,6 +356,9 @@ class SessionWorker:
                     recovery_context={
                         "inbox_id": row.id,
                         "harness_resume_id": session.harness_resume_id,
+                        "slack_channel_id": row.slack_channel_id,
+                        "slack_message_ts": row.slack_message_ts,
+                        "slack_thread_ts": row.slack_thread_ts,
                     },
                 )
             )
@@ -592,6 +596,25 @@ class SessionWorker:
     def _post_terminal_line(self, line: str) -> None:
         if self._event_output is not None:
             self._event_output(line)
+
+
+def _goal_with_slack_context(row) -> str:
+    thread_ts = row.slack_thread_ts or row.slack_message_ts
+    return "\n\n".join(
+        [
+            row.text,
+            "\n".join(
+                [
+                    "Slack trigger context:",
+                    f"- channel: {row.slack_channel_id}",
+                    f"- thread_ts: {thread_ts}",
+                    f"- message_ts: {row.slack_message_ts}",
+                    "Use Slack MCP tools to retrieve context only when needed, for example: "
+                    f"slack_get_thread(channel=\"{row.slack_channel_id}\", thread_ts=\"{thread_ts}\", current_ts=\"{row.slack_message_ts}\").",
+                ]
+            ),
+        ]
+    )
 
 
 def _event_is_set(event: asyncio.Event | None) -> bool:

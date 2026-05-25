@@ -183,7 +183,11 @@ class ClaudeCliAdapterTest(unittest.TestCase):
                 workspace=tmp,
                 output_target=request.output_target,
                 execution_mode=request.execution_mode,
-                recovery_context=request.recovery_context,
+                recovery_context={
+                    "slack_channel_id": "C1",
+                    "slack_message_ts": "100.2",
+                    "slack_thread_ts": "100.1",
+                },
             )
 
             async def run() -> None:
@@ -196,7 +200,11 @@ class ClaudeCliAdapterTest(unittest.TestCase):
             config_path = Path(args[args.index("--mcp-config") + 1])
             config = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertIn("innie_slack", config["mcpServers"])
+            self.assertEqual(["-m", "innie.slack_mcp", "--workspace", str(Path(tmp).resolve())], config["mcpServers"]["innie_slack"]["args"])
             self.assertEqual("xoxb-test-token", env["INNIE_SLACK_BOT_TOKEN"])
+            self.assertNotIn("INNIE_SLACK_CHANNEL", env)
+            self.assertNotIn("INNIE_SLACK_THREAD_TS", env)
+            self.assertNotIn("INNIE_SLACK_MESSAGE_TS", env)
             self.assertEqual(b"write tests", process.stdin.data)
 
     def test_maps_stream_json_events_and_captures_session_id_for_resume(self) -> None:

@@ -141,7 +141,11 @@ class CodexCliAdapterTest(unittest.TestCase):
                         workspace=tmp,
                         output_target="slack:D1:100.1",
                         execution_mode="autonomous",
-                        recovery_context={},
+                        recovery_context={
+                            "slack_channel_id": "C1",
+                            "slack_message_ts": "100.2",
+                            "slack_thread_ts": "100.1",
+                        },
                     )
                 )
 
@@ -151,7 +155,14 @@ class CodexCliAdapterTest(unittest.TestCase):
         self.assertEqual("-", args[-1])
         self.assertIn("mcp_servers.innie_slack.command", " ".join(args))
         self.assertIn("mcp_servers.innie_slack.args", " ".join(args))
+        self.assertIn("--workspace", " ".join(args))
+        self.assertIn(str(Path(tmp).resolve()), " ".join(args))
+        self.assertIn('mcp_servers.innie_slack.tools.slack_get_permalink.approval_mode="approve"', args)
+        self.assertIn('mcp_servers.innie_slack.tools.slack_get_thread.approval_mode="approve"', args)
         self.assertEqual("xoxb-test-token", env["INNIE_SLACK_BOT_TOKEN"])
+        self.assertNotIn("INNIE_SLACK_CHANNEL", env)
+        self.assertNotIn("INNIE_SLACK_THREAD_TS", env)
+        self.assertNotIn("INNIE_SLACK_MESSAGE_TS", env)
         self.assertEqual(b"write tests", process.stdin.data)
 
     def test_maps_thread_started_to_resume_event(self) -> None:

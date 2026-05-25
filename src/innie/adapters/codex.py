@@ -40,7 +40,7 @@ class CodexCliAdapter:
         resume_id = request.recovery_context.get("harness_resume_id")
         system_prompt_arg = _system_prompt_config_arg()
         mcp_config_args = codex_slack_mcp_config_args(request.workspace)
-        env = slack_mcp_process_env(request.workspace)
+        env = slack_mcp_process_env(request.workspace, request.recovery_context)
         if resume_id:
             args = (
                 "codex",
