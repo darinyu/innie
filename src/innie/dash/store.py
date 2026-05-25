@@ -39,8 +39,31 @@ class SqliteInnieStore:
                 "sessions": _scalar(conn, "SELECT COUNT(*) FROM sessions"),
                 "running_sessions": _scalar(conn, "SELECT COUNT(*) FROM sessions WHERE status = 'running'"),
                 "queued_inputs": _scalar(conn, "SELECT COUNT(*) FROM session_inbox WHERE status = 'queued'"),
+                "queued_sessions": _scalar(conn, "SELECT COUNT(DISTINCT session_id) FROM session_inbox WHERE status = 'queued'"),
                 "failed_tasks": _scalar(conn, "SELECT COUNT(*) FROM tasks WHERE status = 'failed'"),
                 "locked_sessions": _scalar(conn, "SELECT COUNT(*) FROM sessions WHERE locked_by IS NOT NULL"),
+                "active_workers": _scalar(
+                    conn,
+                    """
+                    SELECT COUNT(*)
+                    FROM sessions
+                    WHERE locked_by IS NOT NULL
+                      AND (
+                        lock_expires_at IS NULL
+                        OR lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                      )
+                    """,
+                ),
+                "stale_sessions": _scalar(
+                    conn,
+                    """
+                    SELECT COUNT(*)
+                    FROM sessions
+                    WHERE locked_by IS NOT NULL
+                      AND lock_expires_at IS NOT NULL
+                      AND lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    """,
+                ),
             }
             return {
                 "exists": True,
@@ -126,6 +149,7 @@ class SqliteInnieStore:
                 raise KeyError(session_id)
             return {
                 "session": dict(session),
+                "worker": _worker_summary(conn, session_id),
                 "tasks": _rows(conn, "SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC", session_id),
                 "inbox": _decoded_rows(
                     conn,
@@ -209,12 +233,30 @@ def _session_query(where: str) -> str:
                 SELECT COUNT(*) FROM session_inbox i
                 WHERE i.session_id = s.id AND i.status = 'queued'
             ) AS queued_inputs,
+            CASE
+                WHEN s.locked_by IS NULL THEN 'idle'
+                WHEN s.lock_expires_at IS NOT NULL
+                 AND s.lock_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') THEN 'stale'
+                ELSE 'active'
+            END AS lock_state,
             (
                 SELECT event_type FROM task_events e
                 WHERE e.session_id = s.id
                 ORDER BY e.id DESC
                 LIMIT 1
             ) AS last_event_type,
+            (
+                SELECT event_type FROM task_events e
+                WHERE e.session_id = s.id AND e.event_type LIKE 'worker.%'
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) AS latest_worker_event_type,
+            (
+                SELECT payload_json FROM task_events e
+                WHERE e.session_id = s.id AND e.event_type LIKE 'worker.%'
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) AS latest_worker_event_payload_json,
             (
                 SELECT id FROM task_events e
                 WHERE e.session_id = s.id
@@ -253,13 +295,70 @@ def _decode_payloads(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _worker_summary(conn: sqlite3.Connection, session_id: str) -> dict[str, Any]:
+    session = conn.execute(
+        "SELECT locked_by, locked_at, lock_expires_at, status FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    queue_depth = _scalar(
+        conn,
+        "SELECT COUNT(*) FROM session_inbox WHERE session_id = ? AND status = 'queued'",
+        session_id,
+    )
+    current_task = conn.execute(
+        """
+        SELECT id, status, goal
+        FROM tasks
+        WHERE session_id = ? AND status = 'running'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    latest_event = conn.execute(
+        """
+        SELECT id, event_type, payload_json, created_at
+        FROM task_events
+        WHERE session_id = ? AND event_type LIKE 'worker.%'
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    lock_state = "idle"
+    if session is not None and session["locked_by"]:
+        lock_state = "active"
+        expires_at = session["lock_expires_at"]
+        if expires_at is not None:
+            stale = _scalar(
+                conn,
+                "SELECT ? <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                expires_at,
+            )
+            if stale:
+                lock_state = "stale"
+    return {
+        "status": lock_state,
+        "queue_depth": queue_depth,
+        "lock_owner": None if session is None else session["locked_by"],
+        "locked_at": None if session is None else session["locked_at"],
+        "lock_expires_at": None if session is None else session["lock_expires_at"],
+        "current_task_id": None if current_task is None else current_task["id"],
+        "current_task_status": None if current_task is None else current_task["status"],
+        "latest_event": None if latest_event is None else _decode_payloads(dict(latest_event)),
+    }
+
+
 def _empty_counts() -> dict[str, int]:
     return {
         "sessions": 0,
         "running_sessions": 0,
         "queued_inputs": 0,
+        "queued_sessions": 0,
         "failed_tasks": 0,
         "locked_sessions": 0,
+        "active_workers": 0,
+        "stale_sessions": 0,
     }
 
 

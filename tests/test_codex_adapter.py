@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest import mock
 
-from innie.adapters.codex import CodexCliAdapter
+from innie.adapters.codex import CodexCliAdapter, CodexSessionAdapter
 from innie.harness import TaskRequest
 
 
@@ -63,6 +63,23 @@ class FakeStdout:
 
 
 class CodexCliAdapterTest(unittest.TestCase):
+    def test_start_session_returns_session_scoped_adapter(self) -> None:
+        adapter = CodexCliAdapter()
+
+        async def run() -> CodexSessionAdapter:
+            return await adapter.start_session(
+                session_id="sess_1",
+                workspace="/tmp/work",
+                recovery_context={"harness_resume_id": "019e-thread"},
+            )
+
+        session_adapter = asyncio.run(run())
+
+        self.assertIsInstance(session_adapter, CodexSessionAdapter)
+        self.assertEqual("sess_1", session_adapter.session_id)
+        self.assertEqual("/tmp/work", session_adapter.workspace)
+        self.assertEqual({"harness_resume_id": "019e-thread"}, session_adapter.recovery_context)
+
     def test_start_task_uses_codex_resume_when_recovery_context_has_resume_id(self) -> None:
         process = FakeProcess([])
         calls: list[tuple[tuple[str, ...], str]] = []

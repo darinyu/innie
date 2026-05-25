@@ -190,6 +190,58 @@ class ResumeRecordingAdapter:
         return []
 
 
+class PersistentSessionAdapter:
+    harness_id = "persistent"
+    capabilities = HarnessCapabilities(supports_streaming=True, supports_resume=True)
+
+    def __init__(self) -> None:
+        self.sessions_started: list[dict] = []
+        self.sessions_closed = 0
+        self.started: list[str] = []
+        self.completed: list[str] = []
+
+    async def start_session(self, *, session_id: str, workspace: str, recovery_context: dict):
+        self.sessions_started.append(
+            {
+                "session_id": session_id,
+                "workspace": workspace,
+                "recovery_context": dict(recovery_context),
+            }
+        )
+        return PersistentSessionHandle(self)
+
+
+class PersistentSessionHandle:
+    harness_id = "persistent"
+    capabilities = PersistentSessionAdapter.capabilities
+
+    def __init__(self, owner: PersistentSessionAdapter) -> None:
+        self._owner = owner
+        self._session_by_task: dict[str, str] = {}
+
+    async def start_task(self, request):
+        self._owner.started.append(request.goal)
+        self._session_by_task[request.task_id] = request.session_id
+        return TaskHandle(task_id=request.task_id, harness_id=self.harness_id)
+
+    async def send_input(self, task_id: str, input: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_task(self, task_id: str) -> None:
+        pass
+
+    async def stream_events(self, task_id: str):
+        yield HarnessEvent(type="output", message=f"done {task_id}")
+        yield HarnessEvent(type="completed")
+        self._owner.completed.append(task_id)
+
+    async def collect_artifacts(self, task_id: str):
+        return []
+
+    async def close(self) -> None:
+        self._owner.sessions_closed += 1
+
+
 class GoalRecordingAdapter:
     capabilities = HarnessCapabilities(supports_streaming=True)
 
@@ -354,6 +406,98 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(["done", "done"], inbox_statuses)
             self.assertEqual([1], list(adapter.max_active_by_session.values()))
+
+    def test_session_worker_drains_same_session_with_one_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            root = make_trigger("Ev1", "D1", "100.1")
+            followup = make_trigger("Ev2", "D1", "100.2", thread_ts="100.1")
+            for item in (root, followup):
+                persist_trigger(db, item)
+                session = resolve_session_for_trigger(db, item, harness_id="sequential")
+                enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            adapter = SequentialSessionAdapter()
+            manager = SessionManager(path, adapters={"sequential": adapter}, workspace=Path(tmp), max_workers=2)
+            try:
+                asyncio.run(manager.run_until_idle())
+                worker_events = [
+                    (row["event_type"], json.loads(row["payload_json"]))
+                    for row in manager.db.execute(
+                        """
+                        SELECT event_type, payload_json
+                        FROM task_events
+                        WHERE session_id = ? AND event_type LIKE 'worker.%'
+                        ORDER BY id
+                        """,
+                        (session.id,),
+                    )
+                ]
+            finally:
+                manager.close()
+
+            event_types = [event_type for event_type, _ in worker_events]
+            self.assertEqual(1, event_types.count("worker.session.started"))
+            self.assertEqual(1, event_types.count("worker.session.lock_acquired"))
+            self.assertEqual(2, event_types.count("worker.inbox.claimed"))
+            self.assertEqual(1, event_types.count("worker.session.idle"))
+            self.assertEqual(1, event_types.count("worker.session.released"))
+            worker_ids = {
+                payload["worker_id"]
+                for event_type, payload in worker_events
+                if event_type in {"worker.session.started", "worker.inbox.claimed", "worker.session.released"}
+            }
+            self.assertEqual(1, len(worker_ids))
+
+    def test_session_worker_keeps_persistent_harness_until_idle_ttl_expires(self) -> None:
+        async def enqueue_followup_after_first_turn(manager: SessionManager, adapter: PersistentSessionAdapter, session_id: str) -> None:
+            run_task = asyncio.create_task(manager.run_until_idle())
+            while len(adapter.completed) < 1:
+                await asyncio.sleep(0.001)
+            followup = make_trigger("Ev2", "D1", "100.2", thread_ts="100.1")
+            persist_trigger(manager.db, followup)
+            session = resolve_session_for_trigger(manager.db, followup, harness_id="persistent")
+            self.assertEqual(session_id, session.id)
+            enqueue_trigger(manager.db, session=session, trigger=followup)
+            manager.db.commit()
+            await run_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            root = make_trigger("Ev1", "D1", "100.1")
+            persist_trigger(db, root)
+            session = resolve_session_for_trigger(db, root, harness_id="persistent")
+            enqueue_trigger(db, session=session, trigger=root)
+            db.commit()
+            db.close()
+
+            adapter = PersistentSessionAdapter()
+            terminal: list[str] = []
+            manager = SessionManager(
+                path,
+                adapters={"persistent": adapter},
+                workspace=Path(tmp),
+                max_workers=2,
+                session_worker_idle_ttl_seconds=0.2,
+                event_output=terminal.append,
+            )
+            try:
+                asyncio.run(enqueue_followup_after_first_turn(manager, adapter, session.id))
+            finally:
+                manager.close()
+
+            self.assertEqual(1, len(adapter.sessions_started))
+            self.assertEqual(["text Ev1", "text Ev2"], adapter.started)
+            self.assertEqual(2, len(adapter.completed))
+            self.assertEqual(1, adapter.sessions_closed)
+            self.assertEqual(1, terminal.count(f"session {session.id} harness persistent started"))
+            self.assertEqual(1, terminal.count(f"session {session.id} harness persistent closed"))
 
     def test_manager_recovers_stale_processing_work_on_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
