@@ -8,6 +8,7 @@ from typing import Any
 
 from ..harness import HarnessArtifact, HarnessCapabilities, HarnessEvent, TaskHandle, TaskRequest, TokenUsage
 from ..prompts import load_harness_system_prompt
+from ..slack_mcp_config import codex_slack_mcp_config_args, slack_mcp_process_env
 
 
 SpawnFn = Callable[..., Awaitable[asyncio.subprocess.Process]]
@@ -38,6 +39,8 @@ class CodexCliAdapter:
     async def start_task(self, request: TaskRequest) -> TaskHandle:
         resume_id = request.recovery_context.get("harness_resume_id")
         system_prompt_arg = _system_prompt_config_arg()
+        mcp_config_args = codex_slack_mcp_config_args(request.workspace)
+        env = slack_mcp_process_env(request.workspace, request.recovery_context)
         if resume_id:
             args = (
                 "codex",
@@ -46,6 +49,7 @@ class CodexCliAdapter:
                 "--json",
                 "-c",
                 system_prompt_arg,
+                *mcp_config_args,
                 str(resume_id),
                 "-",
             )
@@ -56,14 +60,15 @@ class CodexCliAdapter:
                 "--json",
                 "-c",
                 system_prompt_arg,
+                *mcp_config_args,
                 "--cd",
                 request.workspace,
                 "-",
             )
-        process = await self._spawn(
-            *args,
-            cwd=request.workspace,
-        )
+        if env is None:
+            process = await self._spawn(*args, cwd=request.workspace)
+        else:
+            process = await self._spawn(*args, cwd=request.workspace, env=env)
         await _write_prompt(process, request.goal)
         self._processes[request.task_id] = process
         stderr = getattr(process, "stderr", None)
@@ -128,10 +133,11 @@ class CodexCliAdapter:
     async def collect_artifacts(self, task_id: str) -> list[HarnessArtifact]:
         return []
 
-    async def _default_spawn(self, *args: str, cwd: str) -> asyncio.subprocess.Process:
+    async def _default_spawn(self, *args: str, cwd: str, env: dict[str, str] | None = None) -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(
             *args,
             cwd=cwd,
+            env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

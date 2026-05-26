@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
-from urllib import error, request
+from urllib import error, parse, request
 
 from .slack_files import SlackFileDownloadResult
 
@@ -76,10 +76,21 @@ class SlackWebClient:
         return result
 
     def _post_json_result(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.api_call(method, payload)
+
+    def api_call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(f"https://slack.com/api/{method}", data=data)
         req.add_header("Authorization", f"Bearer {self._token}")
         req.add_header("Content-Type", "application/json; charset=utf-8")
+        with request.urlopen(req, timeout=API_TIMEOUT_SECONDS) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def api_form_call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = parse.urlencode({key: _form_value(value) for key, value in payload.items()}).encode("utf-8")
+        req = request.Request(f"https://slack.com/api/{method}", data=data)
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
         with request.urlopen(req, timeout=API_TIMEOUT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
@@ -114,3 +125,11 @@ def _looks_like_slack_login_redirect(data: bytes) -> bool:
 def _file_id_from_slack_file_url(url: str) -> str | None:
     match = re.search(r"/files-pri/[^/]*-([A-Z0-9]+)(?:/|$)", url)
     return match.group(1) if match else None
+
+
+def _form_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)

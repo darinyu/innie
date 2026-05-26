@@ -287,6 +287,32 @@ class RuntimeTest(unittest.TestCase):
     def test_manager_appends_slack_file_paths_to_claude_goal(self) -> None:
         self._assert_manager_appends_slack_file_paths_to_goal("claude")
 
+    def test_manager_appends_slack_trigger_coordinates_to_goal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            path = workspace / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger("EvSlack", "C1", "100.3", thread_ts="100.1")
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="codex")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+
+            adapter = GoalRecordingAdapter("codex")
+            manager = SessionManager(path, adapters={"codex": adapter}, slack=FakeSlackReplies(), workspace=workspace)
+
+            asyncio.run(manager.run_until_idle())
+
+            self.assertEqual(1, len(adapter.goals))
+            goal = adapter.goals[0]
+            self.assertIn("text EvSlack", goal)
+            self.assertIn("Slack trigger context:", goal)
+            self.assertIn("- channel: C1", goal)
+            self.assertIn("- thread_ts: 100.1", goal)
+            self.assertIn("- message_ts: 100.3", goal)
+            self.assertIn('slack_get_thread(channel="C1", thread_ts="100.1", current_ts="100.3")', goal)
+
     def _assert_manager_appends_slack_file_paths_to_goal(self, harness_id: str) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -669,7 +695,13 @@ class RuntimeTest(unittest.TestCase):
                 manager.close()
 
             self.assertIsNone(adapter.recovery_contexts[0]["harness_resume_id"])
+            self.assertEqual("D1", adapter.recovery_contexts[0]["slack_channel_id"])
+            self.assertEqual("100.1", adapter.recovery_contexts[0]["slack_message_ts"])
+            self.assertIsNone(adapter.recovery_contexts[0]["slack_thread_ts"])
             self.assertEqual("019e-thread", adapter.recovery_contexts[1]["harness_resume_id"])
+            self.assertEqual("D1", adapter.recovery_contexts[1]["slack_channel_id"])
+            self.assertEqual("100.2", adapter.recovery_contexts[1]["slack_message_ts"])
+            self.assertEqual("100.1", adapter.recovery_contexts[1]["slack_thread_ts"])
 
     def test_manager_processes_sessions_concurrently_until_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
