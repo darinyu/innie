@@ -420,9 +420,10 @@ Idle sessions should be canceled and resumed:
 - Idle cancellation must never happen while the session is `executing`,
   `canceling`, or holding queued input.
 
-This is deliberately simpler than Aimee. Aimee supports richer active/passive
-session behavior, watched conversations, and optional mid-turn intervention.
-Innie should copy the concurrency invariant, not the whole product model.
+This is deliberately simpler than full personal-assistant runtimes. Richer
+active/passive session behavior, watched conversations, and optional mid-turn
+intervention can stay outside the MVP. Innie should keep the concurrency
+invariant without absorbing a larger product model.
 
 The manager should also enforce per-user install bounds:
 
@@ -853,8 +854,8 @@ Task 2: Slack app setup wizard.
 
 - Goal: make Slack onboarding convenient enough for a new user to complete
   without reading Slack app docs.
-- Build `innie slack setup` as a guided wizard inspired by Aimee's setup flow,
-  but keep the implementation independent and open-source friendly.
+- Build `innie slack setup` as a guided wizard that keeps the implementation
+  independent and open-source friendly.
 - Start by checking for existing Slack config and tokens. If complete config
   exists, validate it with Slack `auth.test` and ask before refreshing or
   replacing it.
