@@ -46,6 +46,22 @@ class BootstrapTest(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertFalse((workspace / ".innie").exists())
 
+    def test_init_defaults_to_continue_for_missing_optional_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            prompts: list[str] = []
+
+            def input_fn(prompt: str) -> str:
+                prompts.append(prompt)
+                return ""
+
+            with mock.patch("innie.bootstrap.shutil.which", return_value=None):
+                result = init_workspace(workspace, input_fn=input_fn)
+
+            self.assertTrue(result.ok)
+            self.assertTrue((workspace / ".innie" / "innie.db").exists())
+            self.assertEqual(["Continue and create Innie local state anyway? [Y/n] "], prompts)
+
     def test_init_allows_missing_slack_config_on_first_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)

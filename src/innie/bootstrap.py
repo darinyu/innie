@@ -106,8 +106,8 @@ def init_workspace(
     if missing_optional:
         messages.append("Optional setup is incomplete. Innie will not install or change tools without approval.")
         if not assume_yes:
-            answer = input_fn("Continue and create Innie local state anyway? [y/N] ").strip().lower()
-            if answer not in {"y", "yes"}:
+            answer = input_fn("Continue and create Innie local state anyway? [Y/n] ").strip().lower()
+            if answer in {"n", "no"}:
                 messages.append("Canceled before creating local state.")
                 return InitResult(ok=False, messages=messages)
 
