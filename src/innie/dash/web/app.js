@@ -15,6 +15,8 @@ const state = {
   expandedLogSections: new Set(),
   expandedPhaseSections: new Set(),
   expandedLogEntries: new Set(),
+  pendingSessionId: null,
+  pendingToggleId: null,
   freshness: null,
   shellTimer: null,
   sessionTimer: null,
@@ -253,7 +255,7 @@ function sessionLoadingPanel() {
     <section class="session-main">
       <div class="panel detail-placeholder" aria-busy="true">
         <div class="placeholder-copy">
-          <strong>${escapeHtml(summary ? shortId(summary.id) : "Loading session")}</strong>
+          <strong>${spinner("Loading")} ${escapeHtml(summary ? shortId(summary.id) : "Loading session")}</strong>
           <span>${escapeHtml(summary?.latest_user_message || summary?.latest_task_goal || "Fetching session detail from the local store.")}</span>
         </div>
         <div class="placeholder-lines">
@@ -272,11 +274,12 @@ function sessionSwitchRow(row, activeId) {
   const queue = Number(row.queued_inputs || 0);
   const queueLabel = queue ? ` · ${queue} queued` : "";
   const workerLabel = row.lock_state && row.lock_state !== "idle" ? ` · worker ${row.lock_state}` : "";
+  const pending = state.pendingSessionId === row.id;
   return `
-    <button class="session-switch-row ${row.id === activeId ? "active" : ""}" data-session="${escapeAttr(row.id)}">
+    <button class="session-switch-row ${row.id === activeId ? "active" : ""} ${pending ? "pending" : ""}" data-session="${escapeAttr(row.id)}" aria-busy="${pending ? "true" : "false"}">
       <span class="switch-row-top">
         <span class="switch-id">${escapeHtml(shortId(row.id))}</span>
-        ${chip(sessionListStatus(row))}
+        ${pending ? spinner("Loading session") : chip(sessionListStatus(row))}
       </span>
       <span class="switch-preview">${escapeHtml(preview)}</span>
       <span class="switch-meta">${escapeHtml(row.harness_id || "none")}${escapeHtml(queueLabel)}${escapeHtml(workerLabel)} · ${formatTime(row.updated_at)}</span>
@@ -314,8 +317,10 @@ function slackUrl(session) {
   const channel = session.slack_channel_id;
   const rootTs = session.slack_thread_ts || session.slack_root_ts;
   if (!channel || !rootTs) return "";
-  const messageId = rootTs.replace(".", "");
-  return `https://netflix.slack.com/archives/${encodeURIComponent(channel)}/p${encodeURIComponent(messageId)}`;
+  const params = new URLSearchParams();
+  params.set("channel", channel);
+  params.set("message_ts", rootTs);
+  return `https://slack.com/app_redirect?${params.toString()}`;
 }
 
 function sessionTab(detail) {
@@ -588,14 +593,15 @@ function logSectionCard(group) {
   const count = group.items.length;
   const title = group.title;
   const expanded = isLogSectionExpanded(group.id);
+  const pending = state.pendingToggleId === pendingToggleKey("log", group.id);
   const eventLabel = count === 1 ? "1 event" : `${count} events`;
   return `
     <section class="log-section ${expanded ? "open" : ""}" data-log-section="${escapeAttr(group.id)}">
-      <button class="log-section-head ledger-row" data-log-section-toggle="${escapeAttr(group.id)}" aria-expanded="${expanded ? "true" : "false"}">
+      <button class="log-section-head ledger-row ${pending ? "pending" : ""}" data-log-section-toggle="${escapeAttr(group.id)}" aria-expanded="${expanded ? "true" : "false"}" aria-busy="${pending ? "true" : "false"}">
         <span class="log-section-title">${escapeHtml(title)}</span>
         <span class="log-section-summary">${escapeHtml(group.summary)}</span>
         <span class="log-section-meta">${escapeHtml(eventLabel)} · ${formatTime(group.updated_at)}</span>
-        <span class="ledger-action">${expanded ? "[CLOSE]" : "[OPEN]"}</span>
+        <span class="ledger-action">${pending ? spinner("Updating") : expanded ? "[CLOSE]" : "[OPEN]"}</span>
       </button>
       <div class="log-section-items ${expanded ? "" : "hidden"}">
         ${group.phases ? group.phases.map(phaseSectionCard).join("") : group.items.map(logEntryCard).join("") || `<div class="empty compact">No detailed events in this step.</div>`}
@@ -608,13 +614,14 @@ function phaseSectionCard(phase) {
   const count = phase.items.length;
   const eventLabel = count === 1 ? "1 event" : `${count} events`;
   const expanded = isPhaseSectionExpanded(phase.id);
+  const pending = state.pendingToggleId === pendingToggleKey("phase", phase.id);
   return `
     <section class="phase-section ${expanded ? "open" : ""}" data-phase-section="${escapeAttr(phase.id)}">
-      <button class="phase-section-head ledger-row" data-phase-section-toggle="${escapeAttr(phase.id)}" aria-expanded="${expanded ? "true" : "false"}">
+      <button class="phase-section-head ledger-row ${pending ? "pending" : ""}" data-phase-section-toggle="${escapeAttr(phase.id)}" aria-expanded="${expanded ? "true" : "false"}" aria-busy="${pending ? "true" : "false"}">
         <span class="phase-kind">${escapeHtml(phaseKind(phase))}</span>
         <span class="phase-title">${escapeHtml(phase.title)}</span>
         <span class="phase-meta">${escapeHtml(eventLabel)} · ${formatTime(phase.updated_at)}</span>
-        <span class="ledger-action">${expanded ? "[HIDE]" : "[DETAILS]"}</span>
+        <span class="ledger-action">${pending ? spinner("Updating") : expanded ? "[HIDE]" : "[DETAILS]"}</span>
       </button>
       <div class="phase-section-items ${expanded ? "" : "hidden"}">
         ${phase.items.map(logEntryCard).join("")}
@@ -626,13 +633,14 @@ function phaseSectionCard(phase) {
 function logEntryCard(item) {
   const expanded = isLogEntryExpanded(item.id);
   const message = item.message || item.event_type || "Event";
+  const pending = state.pendingToggleId === pendingToggleKey("entry", item.id);
   return `
     <div class="event log-entry">
       <span class="event-type">${escapeHtml(item.event_type || "event")}</span>
       <div class="log-entry-body" data-log-entry="${escapeAttr(item.id)}">
-        <button class="log-entry-summary" data-log-entry-toggle="${escapeAttr(item.id)}" aria-expanded="${expanded ? "true" : "false"}">
+        <button class="log-entry-summary ${pending ? "pending" : ""}" data-log-entry-toggle="${escapeAttr(item.id)}" aria-expanded="${expanded ? "true" : "false"}" aria-busy="${pending ? "true" : "false"}">
           <span class="entry-text">${escapeHtml(message)}</span>
-          <span class="ledger-action entry-action">${expanded ? "[HIDE]" : "[DETAILS]"}</span>
+          <span class="ledger-action entry-action">${pending ? spinner("Updating") : expanded ? "[HIDE]" : "[DETAILS]"}</span>
         </button>
         <div class="log-entry-detail ${expanded ? "" : "hidden"}">
         <div class="event-message">${escapeHtml(message)}</div>
@@ -739,22 +747,13 @@ function bind() {
     });
   });
   document.querySelectorAll("[data-log-section-toggle]").forEach((button) => {
-    button.addEventListener("click", () => {
-      toggleExpanded(state.expandedLogSections, button.dataset.logSectionToggle);
-      render();
-    });
+    button.addEventListener("click", () => runWithPendingToggle("log", button.dataset.logSectionToggle, state.expandedLogSections));
   });
   document.querySelectorAll("[data-phase-section-toggle]").forEach((button) => {
-    button.addEventListener("click", () => {
-      toggleExpanded(state.expandedPhaseSections, button.dataset.phaseSectionToggle);
-      render();
-    });
+    button.addEventListener("click", () => runWithPendingToggle("phase", button.dataset.phaseSectionToggle, state.expandedPhaseSections));
   });
   document.querySelectorAll("[data-log-entry-toggle]").forEach((button) => {
-    button.addEventListener("click", () => {
-      toggleExpanded(state.expandedLogEntries, button.dataset.logEntryToggle);
-      render();
-    });
+    button.addEventListener("click", () => runWithPendingToggle("entry", button.dataset.logEntryToggle, state.expandedLogEntries));
   });
 }
 
@@ -805,8 +804,15 @@ async function selectSession(sessionId, { updateUrl = true } = {}) {
   if (updateUrl) {
     window.history.pushState({}, "", `/runs?session=${encodeURIComponent(sessionId)}`);
   }
+  state.pendingSessionId = sessionId;
   render();
-  await loadSelectedSessionDetail();
+  await nextFrame();
+  try {
+    await loadSelectedSessionDetail();
+  } finally {
+    if (state.pendingSessionId === sessionId) state.pendingSessionId = null;
+    render();
+  }
 }
 
 async function loadSelectedSessionDetail({ force = false, renderAfter = true } = {}) {
@@ -926,6 +932,28 @@ function setExpanded(set, key, expanded) {
 function toggleExpanded(set, key) {
   if (!key) return;
   setExpanded(set, key, !set.has(key));
+}
+
+async function runWithPendingToggle(kind, key, set) {
+  if (!key) return;
+  state.pendingToggleId = pendingToggleKey(kind, key);
+  render();
+  await nextFrame();
+  toggleExpanded(set, key);
+  state.pendingToggleId = null;
+  render();
+}
+
+function pendingToggleKey(kind, key) {
+  return `${kind}:${key}`;
+}
+
+function nextFrame() {
+  return new Promise((resolve) => window.requestAnimationFrame(resolve));
+}
+
+function spinner(label) {
+  return `<span class="spinner" aria-hidden="true"></span><span class="sr-only">${escapeHtml(label)}</span>`;
 }
 
 function tableRows(rows, keys) {
