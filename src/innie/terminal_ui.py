@@ -42,6 +42,14 @@ class WizardUI:
         self._output("\033[2J\033[H")
 
 
+def success_panel(title: str, body: str) -> str:
+    separator = "=" * 88
+    rich_rendered = _rich_success_panel(title, body)
+    if rich_rendered:
+        return f"\n{separator}\n{rich_rendered}"
+    return f"\n{separator}\n{title}\n\n{body}"
+
+
 def _rich_panel(label: str, title: str, body: str) -> str | None:
     try:
         from rich.console import Console
@@ -54,4 +62,18 @@ def _rich_panel(label: str, title: str, body: str) -> str | None:
     console = Console(file=file, force_terminal=True, color_system="auto", width=88)
     text = Text(body)
     console.print(Panel(text, title=f"[bold cyan]{label}[/] [bold]{title}[/]", border_style="cyan"))
+    return file.getvalue().rstrip()
+
+
+def _rich_success_panel(title: str, body: str) -> str | None:
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+    except ImportError:
+        return None
+
+    file = StringIO()
+    console = Console(file=file, force_terminal=True, color_system="auto", width=88)
+    console.print(Panel(Text(body), title=f"[bold green]{title}[/]", border_style="green"))
     return file.getvalue().rstrip()
