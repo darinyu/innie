@@ -609,8 +609,7 @@ def _goal_with_slack_context(row) -> str:
                     f"- channel: {row.slack_channel_id}",
                     f"- thread_ts: {thread_ts}",
                     f"- message_ts: {row.slack_message_ts}",
-                    "Use Slack MCP tools to retrieve context only when needed, for example: "
-                    f"slack_get_thread(channel=\"{row.slack_channel_id}\", thread_ts=\"{thread_ts}\", current_ts=\"{row.slack_message_ts}\").",
+                    "Use the active harness environment to retrieve Slack context only when needed.",
                 ]
             ),
         ]

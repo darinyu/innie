@@ -41,11 +41,11 @@ def event(event_id: str, ts: str, text: str, thread_ts: str | None = None) -> di
         "event_id": event_id,
         "event": {
             "type": "message",
-            "channel_type": "im",
-            "channel": "D1",
+            "channel_type": "channel",
+            "channel": "C1",
             "user": "U1",
             "ts": ts,
-            "text": text,
+            "text": text if thread_ts else f"<@U_DARIN> {text}",
         },
     }
     if thread_ts:
@@ -65,6 +65,7 @@ class Milestone1AcceptanceTest(unittest.TestCase):
                 db,
                 event("Ev1", "100.1", "first request"),
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
                 harness_id="codex",
             )
@@ -72,18 +73,19 @@ class Milestone1AcceptanceTest(unittest.TestCase):
                 db,
                 event("Ev2", "100.2", "follow up", thread_ts="100.1"),
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
                 harness_id="codex",
             )
 
             self.assertTrue(first.decision.accepted)
             self.assertEqual(first.session.id, second.session.id)
-            self.assertEqual([("D1", "100.1", "eyes"), ("D1", "100.1", "eyes")], slack.reactions)
+            self.assertEqual([("C1", "100.1", "eyes"), ("C1", "100.1", "eyes")], slack.reactions)
             inbox_text = [
                 row["text"]
                 for row in db.execute("SELECT text FROM session_inbox WHERE session_id = ? ORDER BY id", (first.session.id,))
             ]
-            self.assertEqual(["first request", "follow up"], inbox_text)
+            self.assertEqual(["<@U_DARIN> first request", "follow up"], inbox_text)
             db.execute("UPDATE sessions SET status = 'running' WHERE id = ?", (first.session.id,))
             db.commit()
             db.close()

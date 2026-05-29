@@ -19,11 +19,11 @@ def payload(text: str = "hello from slack") -> dict:
         "event_id": "Ev1",
         "event": {
             "type": "message",
-            "channel_type": "im",
-            "channel": "D1",
+            "channel_type": "channel",
+            "channel": "C1",
             "user": "U1",
             "ts": "100.1",
-            "text": text,
+            "text": f"<@U_DARIN> {text}",
         },
     }
 
@@ -47,6 +47,7 @@ class RunnerTest(unittest.TestCase):
                 payload(),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
             )
 
@@ -56,8 +57,8 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual("new", result.session_status)
             self.assertEqual("echo", result.harness_id)
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
-            self.assertIn("reaction D1 100.1 eyes", printed)
-            self.assertIn("message D1 100.1 hello from slack", printed)
+            self.assertIn("reaction C1 100.1 eyes", printed)
+            self.assertIn("message C1 100.1 <@U_DARIN> hello from slack", printed)
 
     def test_run_once_payload_verbose_logs_session_before_harness_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,6 +70,7 @@ class RunnerTest(unittest.TestCase):
                 payload(),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
                 verbose=True,
                 output=printed.append,
@@ -108,6 +110,7 @@ class RunnerTest(unittest.TestCase):
                 workspace,
                 payload(),
                 harness_id="scripted",
+                watched_user_id="U_DARIN",
                 bot_user_id="U_BOT",
                 slack=slack,
                 adapters={
@@ -194,6 +197,7 @@ class RunnerTest(unittest.TestCase):
                 payload(),
                 harness_id="scripted",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
                 adapters={
                     "scripted": ScriptedHarnessAdapter(
@@ -246,6 +250,7 @@ class RunnerTest(unittest.TestCase):
                 payload(),
                 harness_id="scripted",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=FailingSlack(output=lambda _line: None),
                 adapters={
                     "scripted": ScriptedHarnessAdapter(
@@ -285,7 +290,7 @@ class RunnerTest(unittest.TestCase):
             event_path = Path(tmp) / "event.json"
             event_path.write_text(json.dumps(payload()), encoding="utf-8")
 
-            self.assertEqual("hello from slack", json.loads(event_path.read_text(encoding="utf-8"))["event"]["text"])
+            self.assertEqual("<@U_DARIN> hello from slack", json.loads(event_path.read_text(encoding="utf-8"))["event"]["text"])
 
     def test_run_once_socket_routes_first_socket_payload(self) -> None:
         class FakeEventSource:
@@ -298,12 +303,13 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=printed.append),
                 event_source=FakeEventSource(),
             )
 
             self.assertTrue(result.accepted)
-            self.assertIn("message D1 100.1 hello from socket", printed)
+            self.assertIn("message C1 100.1 <@U_DARIN> hello from socket", printed)
 
     def test_run_once_socket_ignores_self_echo_until_first_accepted_event(self) -> None:
         class FakeEventSource:
@@ -332,6 +338,7 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=printed.append),
                 event_source=FakeEventSource(),
                 output=printed.append,
@@ -343,7 +350,7 @@ class RunnerTest(unittest.TestCase):
                 "ignored event: self_echo event_id=EvSelf type=message channel=C1 ts=99.1 user=U_BOT bot_id=B1 text=Task completed.",
                 printed,
             )
-            self.assertIn("message D1 100.1 hello after self echo", printed)
+            self.assertIn("message C1 100.1 <@U_DARIN> hello after self echo", printed)
 
     def test_run_forever_socket_processes_until_event_source_stops(self) -> None:
         class FakeEventSource:
@@ -363,6 +370,7 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=printed.append),
                 event_source=FakeEventSource(),
                 output=printed.append,
@@ -372,8 +380,8 @@ class RunnerTest(unittest.TestCase):
             self.assertIn("waiting for Slack event #1", printed)
             self.assertIn("waiting for Slack event #2", printed)
             self.assertIn("stopped after 2 accepted event(s)", printed)
-            self.assertIn("message D1 100.1 first", printed)
-            self.assertIn("message D1 100.2 second", printed)
+            self.assertIn("message C1 100.1 <@U_DARIN> first", printed)
+            self.assertIn("message C1 100.2 <@U_DARIN> second", printed)
 
     def test_run_forever_socket_keeps_receiving_while_worker_is_busy(self) -> None:
         class GateAdapter:
@@ -423,6 +431,7 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="gate",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=printed.append),
                 event_source=FakeEventSource(adapter),
                 adapters={"gate": adapter},
@@ -431,8 +440,8 @@ class RunnerTest(unittest.TestCase):
 
             self.assertEqual(2, processed)
             self.assertIn("waiting for Slack event #2", printed)
-            self.assertIn("message D1 100.1 done", printed)
-            self.assertIn("message D1 200.1 done", printed)
+            self.assertIn("message C1 100.1 done", printed)
+            self.assertIn("message C1 200.1 done", printed)
 
     def test_run_forever_socket_starts_new_session_while_first_task_is_running(self) -> None:
         class OverlapAdapter:
@@ -457,12 +466,12 @@ class RunnerTest(unittest.TestCase):
 
             async def stream_events(self, task_id: str):
                 goal = self.goal_by_task[task_id]
-                if goal == "first":
+                if "first" in goal:
                     self.first_stream_started = True
                     for _ in range(20):
                         await asyncio.sleep(0)
                     for _ in range(200):
-                        if "second" in self.goal_by_task.values():
+                        if any("second" in value for value in self.goal_by_task.values()):
                             self.second_started_before_first_completed = True
                             break
                         await asyncio.sleep(0.001)
@@ -483,7 +492,7 @@ class RunnerTest(unittest.TestCase):
             async def receive_once(self) -> dict:
                 if not self._payloads:
                     raise KeyboardInterrupt
-                if self._payloads[0]["event"]["text"] == "second":
+                if self._payloads[0]["event"]["text"] == "<@U_DARIN> second":
                     while not self._adapter.first_stream_started:
                         await asyncio.sleep(0)
                     for _ in range(20):
@@ -496,6 +505,7 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="overlap",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=lambda _line: None),
                 event_source=FakeEventSource(adapter),
                 adapters={"overlap": adapter},
@@ -534,11 +544,12 @@ class RunnerTest(unittest.TestCase):
                     workspace,
                     harness_id="echo",
                     bot_user_id="U_BOT",
+                    watched_user_id="U_DARIN",
                     event_source=FakeEventSource(),
                     output=lambda _line: None,
                 )
 
-            self.assertIn(("D1", "100.1", "hello without explicit slack"), slack.messages)
+            self.assertIn(("C1", "100.1", "<@U_DARIN> hello without explicit slack"), slack.messages)
 
     def test_run_forever_socket_reports_existing_session_for_thread_reply(self) -> None:
         class FakeEventSource:
@@ -559,6 +570,7 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=printed.append),
                 event_source=FakeEventSource(),
                 output=printed.append,
@@ -586,6 +598,7 @@ class RunnerTest(unittest.TestCase):
                 Path(tmp),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=printed.append),
                 event_source=FakeEventSource(),
                 output=printed.append,
@@ -640,6 +653,7 @@ class RunnerTest(unittest.TestCase):
                 payload(),
                 harness_id="echo",
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=ConsoleSlackClient(output=lambda _line: None),
             )
 

@@ -29,33 +29,22 @@ Screenshot placeholder:
 [screenshot: Slack app display information fields]
 ```
 
-## Step 2/6: Choose Trigger Mode
+## Step 2/6: Configure The Watched User
 
 Time: about 1 minute.
-
-Mode 1 is the safer default:
-
-```text
-Respond when someone tags the bot, like @Innie.
-```
-
-Use this when you want Innie to act only when people explicitly mention the
-bot.
-
-Mode 2 is for personal triage:
 
 ```text
 Respond when someone tags you, like @<username>.
 ```
 
-Use this when you want Innie to help with messages directed at you. This mode
-requires channel/group message events. Innie uses the installing Slack user ID
-returned by OAuth so you do not need to copy your member ID during normal setup.
+Innie uses the installing Slack user ID returned by OAuth so you do not need to
+copy your member ID during normal setup. Add the Slack app to any channel where
+you want Innie to respond on your behalf.
 
 Screenshot placeholder:
 
 ```text
-[screenshot: trigger mode selection in Innie terminal]
+[screenshot: watched user confirmation in Innie terminal]
 ```
 
 ## Step 3/6: Create The Slack App From Manifest

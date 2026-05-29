@@ -11,10 +11,8 @@ class HarnessSystemPromptTest(unittest.TestCase):
 
         self.assertIn("Slack", prompt)
         self.assertIn("thread", prompt.lower())
-        self.assertIn("slack_get_thread", prompt)
-        self.assertIn("slack_get_permalink", prompt)
-        self.assertIn("slack_get_message", prompt)
-        self.assertIn("different Slack workspace", prompt)
+        self.assertIn("active harness environment", prompt)
+        self.assertIn("on that user's behalf", prompt)
         self.assertIn("Slack-friendly", prompt)
 
 
