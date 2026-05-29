@@ -11,7 +11,7 @@ from typing import Any, Callable
 from urllib import parse, request
 
 from .config import load_secrets, write_secrets, write_workspace_config
-from .terminal_ui import WizardUI
+from .terminal_ui import WizardUI, success_panel
 
 
 PromptFn = Callable[[str], str]
@@ -271,12 +271,15 @@ def run_slack_setup(
         app_name=app_name,
         watched_user_id=watched_user_id,
     )
-    messages.append("Saved Slack tokens with restrictive file permissions.")
-    messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
-    messages.append("Next: run `innie run --once --harness codex` and tag yourself in a channel where the app is present.")
-    messages.append("For Claude Code instead, run `innie run --once --harness claude`.")
-    messages.append("After a session exists, inspect it with `innie status <session-id>` or `innie logs <session-id>`.")
-    return SlackSetupResult(ok=True, messages=messages)
+    return SlackSetupResult(
+        ok=True,
+        messages=_success_summary(
+            app_name=app_name,
+            app_id=app_id,
+            bot_user_id=bot_user_id,
+            watched_user_id=watched_user_id,
+        ),
+    )
 
 
 def _prompt_xapp_token(prompt_secret: SecretPromptFn, output: OutputFn) -> str:
@@ -289,6 +292,39 @@ def _prompt_xapp_token(prompt_secret: SecretPromptFn, output: OutputFn) -> str:
         else:
             output("App-level token must start with xapp-. Try again, or press Ctrl-C to stop setup.")
     raise SlackApiError("App-level token must start with xapp-.")
+
+
+def _success_summary(
+    *,
+    app_name: str,
+    app_id: str,
+    bot_user_id: str,
+    watched_user_id: str | None,
+) -> list[str]:
+    watched_label = watched_user_id or "not used"
+    body = "\n".join(
+        [
+            "  ___             _      ",
+            " |_ _|_ __  _ __ (_) ___ ",
+            "  | || '_ \\| '_ \\| |/ _ \\",
+            "  | || | | | | | | |  __/",
+            " |___|_| |_|_| |_|_|\\___|",
+            "",
+            "Slack setup complete.",
+            "",
+            "Status       ok",
+            f"App          {app_name} ({app_id or 'unknown app id'})",
+            f"Bot user     {bot_user_id or 'unknown bot user'}",
+            "Trigger      watched user mention",
+            f"Watched user {watched_label}",
+            "Tokens       saved to .innie/secrets.json (0600)",
+            "",
+            "Next         innie run --once --harness codex",
+            "Alt          innie run --once --harness claude",
+            "Dashboard    innie dash",
+        ]
+    )
+    return [success_panel("Slack setup complete", body)]
 
 
 def _confirm(prompt: PromptFn, text: str) -> bool:
