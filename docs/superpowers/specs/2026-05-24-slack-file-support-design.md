@@ -10,7 +10,7 @@ This design covers inbound Slack file attachments only. It does not add outbound
 
 ## User Flow
 
-1. A user sends a DM, mention, or reply that routes to Innie and includes Slack file attachments.
+1. A user tags the configured user, or replies in an existing Innie thread, with Slack file attachments.
 2. Innie accepts the event as it does today.
 3. Innie downloads each accessible file to `.innie/files/<session_id>/<slack_event_id>/`.
 4. Innie records metadata for each staged file.

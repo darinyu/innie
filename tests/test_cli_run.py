@@ -23,11 +23,11 @@ class CliRunTest(unittest.TestCase):
                         "event_id": "Ev1",
                         "event": {
                             "type": "message",
-                            "channel_type": "im",
-                            "channel": "D1",
+                            "channel_type": "channel",
+                            "channel": "C1",
                             "user": "U1",
                             "ts": "100.1",
-                            "text": "hello from cli",
+                            "text": "<@U_DARIN> hello from cli",
                         },
                     }
                 ),
@@ -46,13 +46,15 @@ class CliRunTest(unittest.TestCase):
                         str(event_file),
                         "--harness",
                         "echo",
+                        "--watched-user-id",
+                        "U_DARIN",
                     ]
                 )
 
             self.assertEqual(0, code)
             output = stdout.getvalue()
-            self.assertIn("reaction D1 100.1 eyes", output)
-            self.assertIn("message D1 100.1 hello from cli", output)
+            self.assertIn("reaction C1 100.1 eyes", output)
+            self.assertIn("message C1 100.1 <@U_DARIN> hello from cli", output)
             self.assertIn("accepted new session", output)
             self.assertIn("logs:", output)
 

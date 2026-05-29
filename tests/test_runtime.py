@@ -311,7 +311,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn("- channel: C1", goal)
             self.assertIn("- thread_ts: 100.1", goal)
             self.assertIn("- message_ts: 100.3", goal)
-            self.assertIn('slack_get_thread(channel="C1", thread_ts="100.1", current_ts="100.3")', goal)
+            self.assertIn("Use the active harness environment to retrieve Slack context only when needed.", goal)
 
     def _assert_manager_appends_slack_file_paths_to_goal(self, harness_id: str) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -40,11 +40,11 @@ def event() -> dict:
         "event_id": "Ev1",
         "event": {
             "type": "message",
-            "channel_type": "im",
-            "channel": "D1",
+            "channel_type": "channel",
+            "channel": "C1",
             "user": "U1",
             "ts": "100.1",
-            "text": "run the milestone 2 test",
+            "text": "<@U_DARIN> run the milestone 2 test",
         },
     }
 
@@ -56,7 +56,14 @@ class Milestone2AcceptanceTest(unittest.TestCase):
             db = connect(db_path)
             initialize_schema(db)
             slack = FakeSlack()
-            accepted = accept_slack_event(db, event(), bot_user_id="U_BOT", slack=slack, harness_id="scripted")
+            accepted = accept_slack_event(
+                db,
+                event(),
+                bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
+                slack=slack,
+                harness_id="scripted",
+            )
             db.close()
 
             adapter = ScriptedHarnessAdapter(
@@ -89,11 +96,11 @@ class Milestone2AcceptanceTest(unittest.TestCase):
             finally:
                 manager.close()
 
-            self.assertIn(("D1", "100.1", "eyes"), slack.reactions)
-            self.assertIn(("D1", "100.1", "Innie is working"), slack.messages)
-            self.assertIn(("D1", "900.1", "Usage: 20 input, 5 output, 50% cache hit."), slack.updates)
-            self.assertNotIn(("D1", "900.1"), slack.deletes)
-            self.assertIn(("D1", "900.1", "milestone 2 complete"), slack.updates)
+            self.assertIn(("C1", "100.1", "eyes"), slack.reactions)
+            self.assertIn(("C1", "100.1", "Innie is working"), slack.messages)
+            self.assertIn(("C1", "900.1", "Usage: 20 input, 5 output, 50% cache hit."), slack.updates)
+            self.assertNotIn(("C1", "900.1"), slack.deletes)
+            self.assertIn(("C1", "900.1", "milestone 2 complete"), slack.updates)
             self.assertIn("harness.usage", task_events)
             self.assertIn("harness.completed", task_events)
             self.assertEqual(1, artifact_count)
@@ -109,6 +116,7 @@ class Milestone2AcceptanceTest(unittest.TestCase):
                 db,
                 event(),
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
                 harness_id="scripted",
             )
@@ -122,6 +130,7 @@ class Milestone2AcceptanceTest(unittest.TestCase):
                 db,
                 reply_payload,
                 bot_user_id="U_BOT",
+                watched_user_id="U_DARIN",
                 slack=slack,
                 harness_id="scripted",
             )

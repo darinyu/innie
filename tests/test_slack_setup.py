@@ -47,11 +47,10 @@ class SlackSetupTest(unittest.TestCase):
             app_name="innie",
             display_name="Innie",
             redirect_urls=["http://localhost:8765/callback"],
-            include_channel_messages=False,
         )
 
         events = manifest["settings"]["event_subscriptions"]["bot_events"]
-        self.assertEqual(["app_mention", "message.im"], events)
+        self.assertEqual(["message.channels", "message.groups"], events)
         self.assertTrue(manifest["settings"]["socket_mode_enabled"])
         self.assertTrue(manifest["settings"]["interactivity"]["is_enabled"])
         scopes = manifest["oauth_config"]["scopes"]["bot"]
@@ -69,7 +68,6 @@ class SlackSetupTest(unittest.TestCase):
                 [
                     "",
                     "",
-                    "1",
                     "",
                     "client-id",
                     "client-secret",
@@ -115,22 +113,21 @@ class SlackSetupTest(unittest.TestCase):
             output_text = "\n".join(outputs)
             self.assertIn("Step 1/6", output_text)
             self.assertIn("modifiable", output_text)
-            self.assertIn("Mode 1", output_text)
-            self.assertIn("Mode 2", output_text)
+            self.assertIn("Configure the watched user", output_text)
+            self.assertIn("tags the installing Slack user", output_text)
             self.assertIn("https://api.slack.com/apps", output_text)
             self.assertIn('"display_information"', output_text)
             self.assertIn("BEGIN SLACK APP MANIFEST", output_text)
             self.assertIn("END SLACK APP MANIFEST", output_text)
             self.assertIn("\033[2J\033[H", output_text)
 
-    def test_user_mention_mode_adds_channel_message_events(self) -> None:
+    def test_setup_saves_watched_user_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             answers = iter(
                 [
                     "support-innie",
                     "Support Innie",
-                    "2",
                     "",
                     "client-id",
                     "client-secret",
@@ -159,7 +156,6 @@ class SlackSetupTest(unittest.TestCase):
             self.assertIn("message.channels", events)
             self.assertIn("message.groups", events)
             config = (workspace / ".innie" / "config.yaml").read_text()
-            self.assertIn("trigger_mode: user_mention", config)
             self.assertIn("watched_user_id: U_INSTALLER", config)
 
     def test_xapp_token_prompt_retries_blank_input(self) -> None:
@@ -169,7 +165,6 @@ class SlackSetupTest(unittest.TestCase):
                 [
                     "",
                     "",
-                    "1",
                     "",
                     "client-id",
                     "client-secret",

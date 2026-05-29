@@ -98,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--harness", choices=("echo", "codex", "claude"), default="codex", help="Harness adapter to use")
     run_parser.add_argument("--max-workers", type=int, default=7, help="Maximum concurrent harness workers")
     run_parser.add_argument("--bot-user-id", default="U_BOT", help="Bot user id for local event-file runs")
-    run_parser.add_argument("--watched-user-id", default=None, help="Optional watched user id for mention mode")
+    run_parser.add_argument("--watched-user-id", default=None, help="Slack user id that Innie watches for mentions")
     run_parser.add_argument("--verbose", action="store_true", help="Print verbose runtime diagnostics")
 
     return parser

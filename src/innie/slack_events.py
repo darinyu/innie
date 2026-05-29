@@ -64,12 +64,6 @@ def normalize_slack_event(
         and (channel_id, thread_root) in known_thread_roots
     ):
         trigger_type = "thread_reply"
-    elif event_type == "app_mention":
-        trigger_type = "app_mention"
-    elif event_type == "message" and event.get("channel_type") == "im":
-        trigger_type = "dm"
-    elif event_type == "message" and f"<@{bot_user_id}>" in text:
-        trigger_type = "channel_mention"
     elif event_type == "message" and watched_user_id and f"<@{watched_user_id}>" in text:
         trigger_type = "user_mention"
     else:

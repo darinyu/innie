@@ -20,18 +20,15 @@ OutputFn = Callable[[str], None]
 
 
 BOT_SCOPES = [
-    "app_mentions:read",
     "channels:history",
     "chat:write",
     "files:read",
     "files:write",
     "groups:history",
-    "im:history",
-    "im:read",
     "reactions:read",
     "reactions:write",
 ]
-BOT_EVENTS = ["app_mention", "message.im"]
+BOT_EVENTS = ["message.channels", "message.groups"]
 
 
 @dataclass(frozen=True)
@@ -85,11 +82,8 @@ def build_manifest(
     app_name: str,
     display_name: str,
     redirect_urls: list[str],
-    include_channel_messages: bool,
 ) -> dict[str, Any]:
     events = list(BOT_EVENTS)
-    if include_channel_messages:
-        events.extend(["message.channels", "message.groups"])
 
     return {
         "display_information": {
@@ -166,24 +160,16 @@ def run_slack_setup(
     ).strip() or "Innie"
     ui.step(
         "Step 2/6",
-        "Choose trigger mode",
-        "Mode 1: respond when someone tags the bot, like @Innie.\n"
-        "Mode 2: respond when someone tags you, like @<username>, in channels where the app is present.",
+        "Configure the watched user",
+        "Innie responds when someone tags the installing Slack user, like @<username>, "
+        "in channels where the app is present.",
     )
-    trigger_mode_choice = prompt(
-        "Choose Mode 1 or Mode 2 [1]: "
-    ).strip() or "1"
-    trigger_mode = "user_mention" if trigger_mode_choice == "2" else "bot_mention"
-    watched_user_id = None
-    if trigger_mode == "user_mention":
-        messages.append("Mode 2 selected. Innie will use the installing Slack user ID returned by OAuth.")
-    include_channel_messages = trigger_mode == "user_mention"
+    messages.append("Innie will use the installing Slack user ID returned by OAuth.")
     redirect_url = _resolve_redirect_url(prompt, messages)
     manifest = build_manifest(
         app_name=app_name,
         display_name=display_name,
         redirect_urls=[redirect_url],
-        include_channel_messages=include_channel_messages,
     )
 
     manifest_path = workspace / ".innie" / "slack-manifest.json"
@@ -241,17 +227,16 @@ def run_slack_setup(
         return SlackSetupResult(ok=False, messages=messages + ["OAuth did not return an xoxb- bot token."])
 
     app_id = oauth_result.get("app_id") or app_id
-    if trigger_mode == "user_mention":
-        watched_user_id = (oauth_result.get("authed_user") or {}).get("id")
-        if not watched_user_id:
-            return SlackSetupResult(
-                ok=False,
-                messages=messages
-                + [
-                    "Mode 2 needs Slack to return the installing user ID from OAuth, but it was missing.",
-                    "Run setup again with Mode 1, or report this OAuth response shape as a bug.",
-                ],
-            )
+    watched_user_id = (oauth_result.get("authed_user") or {}).get("id")
+    if not watched_user_id:
+        return SlackSetupResult(
+            ok=False,
+            messages=messages
+            + [
+                "Innie needs Slack to return the installing user ID from OAuth, but it was missing.",
+                "Run setup again, or report this OAuth response shape as a bug.",
+            ],
+        )
     auth = api.post_json("auth.test", bot_token, {})
     bot_user_id = auth.get("user_id", "")
 
@@ -284,12 +269,11 @@ def run_slack_setup(
         app_id=app_id,
         bot_user_id=bot_user_id,
         app_name=app_name,
-        trigger_mode=trigger_mode,
         watched_user_id=watched_user_id,
     )
     messages.append("Saved Slack tokens with restrictive file permissions.")
     messages.append("Slack setup complete: bot can authenticate and Socket Mode can open.")
-    messages.append("Next: run `innie run --once --harness codex` and send one Slack DM or mention.")
+    messages.append("Next: run `innie run --once --harness codex` and tag yourself in a channel where the app is present.")
     messages.append("For Claude Code instead, run `innie run --once --harness claude`.")
     messages.append("After a session exists, inspect it with `innie status <session-id>` or `innie logs <session-id>`.")
     return SlackSetupResult(ok=True, messages=messages)

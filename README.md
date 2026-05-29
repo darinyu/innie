@@ -199,7 +199,7 @@ release checklist.
 - SQLite 3 for local durable session state.
 - Rich for colored, wrapped terminal setup screens. `scripts/install.py` asks
   before installing it, and Innie falls back to plain text if you skip it.
-- A Slack app for DM and channel mention triggers.
+- A Slack app installed in channels where Innie should respond when people tag you.
 - Codex CLI or Claude Code CLI. Codex remains the default; Claude is opt-in via
   `--harness claude`. OpenCode, Goose, and custom runtimes are future adapters.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev

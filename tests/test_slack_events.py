@@ -18,7 +18,7 @@ class FakeSlack:
 
 
 class SlackEventIntakeTest(unittest.TestCase):
-    def test_accepts_dm_and_persists_trigger(self) -> None:
+    def test_accepts_user_mention_and_persists_trigger(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db = connect(Path(tmp.name) / "innie.db")
@@ -27,25 +27,25 @@ class SlackEventIntakeTest(unittest.TestCase):
             "event_id": "Ev1",
             "event": {
                 "type": "message",
-                "channel_type": "im",
-                "channel": "D1",
+                "channel_type": "channel",
+                "channel": "C1",
                 "user": "U1",
                 "ts": "171.1",
-                "text": "fix this",
+                "text": "<@U_DARIN> fix this",
             },
         }
 
-        decision = normalize_slack_event(payload, bot_user_id="U_BOT")
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", watched_user_id="U_DARIN")
         self.assertTrue(decision.accepted)
-        self.assertEqual("dm", decision.trigger.trigger_type)
+        self.assertEqual("user_mention", decision.trigger.trigger_type)
 
         persist_trigger(db, decision.trigger)
         row = db.execute("SELECT * FROM slack_triggers WHERE slack_event_id = 'Ev1'").fetchone()
-        self.assertEqual("D1", row["slack_channel_id"])
-        self.assertEqual("fix this", row["text"])
+        self.assertEqual("C1", row["slack_channel_id"])
+        self.assertEqual("<@U_DARIN> fix this", row["text"])
 
-    def test_accepts_channel_mention_and_ignores_irrelevant_message(self) -> None:
-        mention = {
+    def test_rejects_unwatched_mention_and_irrelevant_message(self) -> None:
+        unwatched_mention = {
             "event_id": "Ev2",
             "event": {
                 "type": "message",
@@ -53,7 +53,7 @@ class SlackEventIntakeTest(unittest.TestCase):
                 "channel": "C1",
                 "user": "U1",
                 "ts": "171.2",
-                "text": "<@U_BOT> inspect",
+                "text": "<@U_OTHER> inspect",
             },
         }
         ignored = {
@@ -68,7 +68,9 @@ class SlackEventIntakeTest(unittest.TestCase):
             },
         }
 
-        self.assertEqual("channel_mention", normalize_slack_event(mention, bot_user_id="U_BOT").trigger.trigger_type)
+        unwatched_decision = normalize_slack_event(unwatched_mention, bot_user_id="U_BOT", watched_user_id="U_DARIN")
+        self.assertFalse(unwatched_decision.accepted)
+        self.assertEqual("not_for_innie", unwatched_decision.reason)
         decision = normalize_slack_event(ignored, bot_user_id="U_BOT")
         self.assertFalse(decision.accepted)
         self.assertEqual("not_for_innie", decision.reason)
@@ -96,17 +98,17 @@ class SlackEventIntakeTest(unittest.TestCase):
             "event_id": "Ev4",
             "event": {
                 "type": "message",
-                "channel_type": "im",
-                "channel": "D1",
+                "channel_type": "channel",
+                "channel": "C1",
                 "user": "U_BOT",
                 "ts": "171.4",
-                "text": "my own message",
+                "text": "<@U_DARIN> my own message",
             },
         }
         self.assertEqual("self_echo", normalize_slack_event(payload, bot_user_id="U_BOT").reason)
 
         payload["event"]["user"] = "U1"
-        decision = normalize_slack_event(payload, bot_user_id="U_BOT", seen_event_ids={"Ev4"})
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", watched_user_id="U_DARIN", seen_event_ids={"Ev4"})
         self.assertFalse(decision.accepted)
         self.assertEqual("duplicate_retry", decision.reason)
 
@@ -160,27 +162,27 @@ class SlackEventIntakeTest(unittest.TestCase):
                 "event_id": "EvOriginal",
                 "event": {
                     "type": "message",
-                    "channel_type": "im",
-                    "channel": "D1",
+                    "channel_type": "channel",
+                    "channel": "C1",
                     "user": "U1",
                     "ts": "171.6",
-                    "text": "first delivery",
+                    "text": "<@U_DARIN> first delivery",
                 },
             }
             duplicate_payload = {
                 "event_id": "EvDuplicate",
                 "event": {
                     "type": "message",
-                    "channel_type": "im",
-                    "channel": "D1",
+                    "channel_type": "channel",
+                    "channel": "C1",
                     "user": "U1",
                     "ts": "171.6",
-                    "text": "first delivery",
+                    "text": "<@U_DARIN> first delivery",
                 },
             }
-            first = accept_slack_event(db, first_payload, bot_user_id="U_BOT", slack=FakeSlack())
+            first = accept_slack_event(db, first_payload, bot_user_id="U_BOT", watched_user_id="U_DARIN", slack=FakeSlack())
 
-            accepted = accept_slack_event(db, duplicate_payload, bot_user_id="U_BOT", slack=FakeSlack())
+            accepted = accept_slack_event(db, duplicate_payload, bot_user_id="U_BOT", watched_user_id="U_DARIN", slack=FakeSlack())
 
             self.assertFalse(accepted.decision.accepted)
             self.assertEqual("duplicate_retry", accepted.decision.reason)

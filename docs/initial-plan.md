@@ -310,8 +310,8 @@ be a one-time script that asks for the minimum Slack credentials, writes
 
 Expected behavior:
 
-- Both DMs and channel mentions are supported from day one.
-- A DM or channel mention creates a session and its first task.
+- Messages that tag the configured user are supported from day one.
+- A configured-user mention creates a session and its first task.
 - A configurable `slack.event_received` hook can acknowledge accepted messages
   before the session starts. The default hook should post an unthreaded
   `:eyes:` reaction or message at the Slack root event so the outie knows Innie
@@ -328,7 +328,7 @@ Expected behavior:
 ## Concurrency And Sessions
 
 Concurrency is the core design constraint. Innie should treat each Slack thread,
-DM thread, scheduled run, or future interface conversation as a durable
+scheduled run, or future interface conversation as a durable
 `session`. A session is the unit users understand, the unit the future web
 console groups by, and the unit Innie can recover after restart.
 
@@ -343,10 +343,7 @@ workspace, post competing answers, or corrupt each other's context.
 
 Session identity should be explicit and Slack-native:
 
-- A new unthreaded DM message starts a new session. Innie replies in a Slack
-  thread rooted at that message, so the same DM can contain multiple concurrent
-  sessions.
-- A channel mention starts a new session rooted at the mention message.
+- A configured-user mention starts a new session rooted at the mention message.
 - Replies in an existing Innie thread map back to the same session.
 - A scheduled run creates a session with `trigger_type = schedule` and an
   output target such as a configured Slack channel or thread.
@@ -821,9 +818,9 @@ events, and recover after restart.
 ### Milestone 1: Slack To Durable Session
 
 Goal: prove the smallest useful product loop before adding real harness work.
-A Slack DM or channel mention should become a durable session, acknowledge the
-user immediately, preserve follow-ups in order, and expose enough local state to
-debug what happened.
+A Slack message tagging the configured user should become a durable session,
+acknowledge the user immediately, preserve follow-ups in order, and expose
+enough local state to debug what happened.
 
 Task 1: Local workspace bootstrap.
 
@@ -861,11 +858,8 @@ Task 2: Slack app setup wizard.
 - Generate an Innie Slack app manifest from a minimal template:
   - display name and app name chosen by the user.
   - Socket Mode enabled.
-  - App Home messages enabled if needed for DMs.
-  - bot events for `app_mention`, `message.im`, and optionally
-    `message.channels` / `message.groups` when the user wants channel mention
-    support.
-  - bot scopes for receiving mentions/messages and posting replies/reactions,
+  - bot events for `message.channels` and `message.groups`.
+  - bot scopes for receiving channel messages and posting replies/reactions,
     starting with the smallest useful set.
 - Ask for a one-time Slack App Configuration token only if the user wants Innie
   to create or update the app manifest automatically. Do not store this token.
@@ -902,9 +896,9 @@ Task 2: Slack app setup wizard.
 
 Task 3: Slack event intake.
 
-- Goal: turn Slack DMs and channel mentions into normalized triggers for the
-  single user-owned innie.
-- Support both direct messages and channel mentions from day one.
+- Goal: turn Slack messages that tag the configured user into normalized
+  triggers for the single user-owned innie.
+- Support configured-user mentions from day one.
 - Ignore self-echoes, retries, unsupported event types, and messages not meant
   for the configured innie.
 - Persist the accepted trigger before any visible response.
