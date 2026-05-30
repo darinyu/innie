@@ -20,15 +20,17 @@ OutputFn = Callable[[str], None]
 
 
 BOT_SCOPES = [
+    "app_mentions:read",
     "channels:history",
     "chat:write",
     "files:read",
     "files:write",
     "groups:history",
+    "im:write",
     "reactions:read",
     "reactions:write",
 ]
-BOT_EVENTS = ["message.channels", "message.groups"]
+BOT_EVENTS = ["app_mention", "message.channels", "message.groups"]
 
 
 @dataclass(frozen=True)

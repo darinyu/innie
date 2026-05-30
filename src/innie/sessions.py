@@ -53,6 +53,10 @@ def resolve_session_for_trigger(
         VALUES(?, ?, ?, ?, ?, ?, 'new', ?)
         ON CONFLICT(slack_channel_id, slack_root_ts) DO UPDATE SET
             slack_thread_ts = excluded.slack_thread_ts,
+            trigger_type = CASE
+                WHEN excluded.trigger_type IN ('bot_mention', 'user_mention') THEN excluded.trigger_type
+                ELSE sessions.trigger_type
+            END,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         """,
         (

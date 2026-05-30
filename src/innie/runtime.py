@@ -23,6 +23,7 @@ class SessionManager:
         slack: SlackReplyClient | None = None,
         workspace: Path | None = None,
         event_output: EventOutput | None = None,
+        watched_user_id: str | None = None,
         max_workers: int = 7,
         session_worker_idle_ttl_seconds: float = 0.0,
         stop_when_idle: asyncio.Event | None = None,
@@ -35,6 +36,7 @@ class SessionManager:
         self.workspace = workspace or db_path.parent.parent
         self.progress = SlackProgressRenderer()
         self.event_output = event_output
+        self.watched_user_id = watched_user_id
         self.workers: dict[str, SessionWorker] = {}
         self.max_workers = max(1, max_workers)
         self.session_worker_idle_ttl_seconds = max(0.0, session_worker_idle_ttl_seconds)
@@ -68,6 +70,7 @@ class SessionManager:
                     slack=self.slack,
                     workspace=self.workspace,
                     progress=self.progress,
+                    watched_user_id=self.watched_user_id,
                     event_output=self.event_output,
                 ),
             )
@@ -188,6 +191,7 @@ class SessionManager:
                     slack=self.slack,
                     workspace=self.workspace,
                     progress=self.progress,
+                    watched_user_id=self.watched_user_id,
                     event_output=self.event_output,
                 ),
             )

@@ -93,6 +93,59 @@ class SlackEventIntakeTest(unittest.TestCase):
         self.assertTrue(decision.accepted)
         self.assertEqual("user_mention", decision.trigger.trigger_type)
 
+    def test_accepts_bot_mention(self) -> None:
+        payload = {
+            "event_id": "EvBotMention",
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "171.7",
+                "text": "<@U_BOT> can you look?",
+            },
+        }
+
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", watched_user_id="U_DARIN")
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual("bot_mention", decision.trigger.trigger_type)
+
+    def test_last_relevant_mention_controls_response_mode(self) -> None:
+        payload = {
+            "event_id": "EvLastMention",
+            "event": {
+                "type": "message",
+                "channel_type": "channel",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "171.8",
+                "text": "<@U_BOT> draft this for <@U_DARIN>",
+            },
+        }
+
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", watched_user_id="U_DARIN")
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual("user_mention", decision.trigger.trigger_type)
+
+    def test_accepts_app_mention_as_bot_mention(self) -> None:
+        payload = {
+            "event_id": "EvAppMention",
+            "event": {
+                "type": "app_mention",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "171.9",
+                "text": "<@U_BOT> help here",
+            },
+        }
+
+        decision = normalize_slack_event(payload, bot_user_id="U_BOT", watched_user_id="U_DARIN")
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual("bot_mention", decision.trigger.trigger_type)
+
     def test_rejects_self_echo_and_duplicate_retry(self) -> None:
         payload = {
             "event_id": "Ev4",

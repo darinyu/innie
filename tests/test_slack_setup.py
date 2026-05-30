@@ -50,13 +50,15 @@ class SlackSetupTest(unittest.TestCase):
         )
 
         events = manifest["settings"]["event_subscriptions"]["bot_events"]
-        self.assertEqual(["message.channels", "message.groups"], events)
+        self.assertEqual(["app_mention", "message.channels", "message.groups"], events)
         self.assertTrue(manifest["settings"]["socket_mode_enabled"])
         self.assertTrue(manifest["settings"]["interactivity"]["is_enabled"])
         scopes = manifest["oauth_config"]["scopes"]["bot"]
+        self.assertIn("app_mentions:read", scopes)
         self.assertIn("chat:write", scopes)
         self.assertIn("files:read", scopes)
         self.assertIn("files:write", scopes)
+        self.assertIn("im:write", scopes)
         self.assertIn("reactions:read", scopes)
 
     def test_manual_setup_writes_manifest_config_and_restrictive_secrets(self) -> None:

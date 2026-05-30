@@ -17,7 +17,16 @@ class FakeSlackReplies:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str, str]] = []
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str) -> None:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> None:
         self.messages.append((channel, thread_ts, text))
 
 

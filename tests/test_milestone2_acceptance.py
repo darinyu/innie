@@ -22,7 +22,16 @@ class FakeSlack:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self.reactions.append((channel, timestamp, name))
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> str:
         self.messages.append((channel, thread_ts, text))
         ts = f"900.{self._next_ts}"
         self._next_ts += 1
@@ -96,7 +105,7 @@ class Milestone2AcceptanceTest(unittest.TestCase):
             finally:
                 manager.close()
 
-            self.assertIn(("C1", "100.1", "eyes"), slack.reactions)
+            self.assertEqual([], slack.reactions)
             self.assertIn(("C1", "100.1", "Innie is working"), slack.messages)
             self.assertIn(("C1", "900.1", "Usage: 20 input, 5 output, 50% cache hit."), slack.updates)
             self.assertNotIn(("C1", "900.1"), slack.deletes)

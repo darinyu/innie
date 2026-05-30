@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
@@ -38,6 +39,14 @@ from .tasks import (
 EventOutput = Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class SlackDeliveryTarget:
+    channel: str
+    thread_ts: str
+    mode: str = "message"
+    user: str | None = None
+
+
 class SessionWorker:
     def __init__(
         self,
@@ -48,6 +57,7 @@ class SessionWorker:
         slack: SlackReplyClient | None,
         workspace: Path,
         progress: SlackProgressRenderer,
+        watched_user_id: str | None = None,
         event_output: EventOutput | None = None,
     ) -> None:
         self._db = db
@@ -56,9 +66,12 @@ class SessionWorker:
         self._slack = slack
         self._workspace = workspace
         self._progress = progress
+        self._watched_user_id = watched_user_id
         self._event_output = event_output
         self._cancel_requested = False
         self._progress_messages: dict[str, tuple[str, str]] = {}
+        self._delivery_targets: dict[str, SlackDeliveryTarget] = {}
+        self._finalized_tasks: set[str] = set()
         self._progress_details: dict[str, list[str]] = {}
         self._progress_summaries: dict[str, str] = {}
         self._wake_requested = asyncio.Event()
@@ -332,7 +345,7 @@ class SessionWorker:
 
     def _goal_for_row(self, row, *, harness_id: str) -> str:
         records = list_files_for_inbox(self._db, session_id=row.session_id, slack_event_id=row.slack_event_id)
-        goal = _goal_with_slack_context(row) if harness_id in {"codex", "claude"} else row.text
+        goal = _goal_with_slack_context(self._db, row) if harness_id in {"codex", "claude"} else row.text
         return build_goal_with_files(goal, records)
 
     async def _run_harness_turn(self, adapter: HarnessAdapter, task: TaskRecord, row) -> str:
@@ -394,6 +407,11 @@ class SessionWorker:
     def _post_progress(self, task_id: str, event: HarnessEvent, row) -> None:
         if self._slack is None:
             return
+        if task_id in self._finalized_tasks:
+            if event.type == "completed":
+                self._delete_progress_message(task_id)
+                self._finalized_tasks.discard(task_id)
+            return
         detail_line = self._progress.detail_line(event)
         if detail_line is not None:
             self._progress_details.setdefault(task_id, []).append(detail_line)
@@ -401,14 +419,16 @@ class SessionWorker:
         progress_details = self._progress_details.get(task_id, [])
         if event.type in {"output", "failed", "canceled"}:
             final_messages = self._progress.render_final_messages(task_id, event, progress_details)
+            target = self._delivery_target_for_task(task_id, row)
             self._replace_progress_message_or_post_final(
                 task_id,
-                channel=row.slack_channel_id,
-                thread_ts=row.slack_thread_ts or row.slack_message_ts,
+                target=target,
                 messages=final_messages,
             )
             self._progress_details.pop(task_id, None)
             self._progress_summaries.pop(task_id, None)
+            self._delivery_targets.pop(task_id, None)
+            self._finalized_tasks.add(task_id)
             return
         else:
             rendered = self._progress.render_widget(task_id, event)
@@ -419,46 +439,44 @@ class SessionWorker:
         if rendered is None:
             if event.type in {"failed", "canceled", "completed"}:
                 self._progress_details.pop(task_id, None)
-                self._progress_summaries.pop(task_id, None)
+            self._progress_summaries.pop(task_id, None)
             return
         if event.type in {"progress", "tool_use", "tool_result", "usage"}:
+            target = self._delivery_target_for_task(task_id, row)
             self._upsert_progress_message(
                 task_id,
-                channel=row.slack_channel_id,
-                thread_ts=row.slack_thread_ts or row.slack_message_ts,
+                target=target,
                 text=rendered.text,
                 blocks=rendered.blocks,
             )
             return
-        self._slack.post_message(
-            channel=row.slack_channel_id,
-            thread_ts=row.slack_thread_ts or row.slack_message_ts,
-            text=rendered.text,
-            blocks=rendered.blocks,
-        )
+        target = self._delivery_target_for_task(task_id, row)
+        self._post_slack_message(target=target, text=rendered.text, blocks=rendered.blocks)
 
     def _replace_progress_message_or_post_final(
         self,
         task_id: str,
         *,
-        channel: str,
-        thread_ts: str,
+        target: SlackDeliveryTarget,
         messages: list,
     ) -> None:
         if self._slack is None:
             return
         if not messages:
             return
+        if target.mode == "ephemeral":
+            self._post_final_messages(target=target, messages=messages, task_id=task_id)
+            return
         current = self._progress_messages.pop(task_id, None)
         if current is None:
-            self._post_final_messages(channel=channel, thread_ts=thread_ts, messages=messages, task_id=task_id)
+            self._post_final_messages(target=target, messages=messages, task_id=task_id)
             return
         current_channel, ts = current
         first = messages[0]
         try:
             self._slack.update_message(channel=current_channel, ts=ts, text=first.text, blocks=first.blocks)
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack final updated ts={ts}")
-            self._post_final_messages(channel=channel, thread_ts=thread_ts, messages=messages[1:], task_id=task_id)
+            self._post_final_messages(target=target, messages=messages[1:], task_id=task_id)
         except Exception as exc:
             self._post_terminal_line(f"session {self.session_id} task {task_id} slack final update failed: {exc}")
             append_runtime_event(
@@ -469,20 +487,19 @@ class SessionWorker:
                 {"operation": "final_update", "channel": current_channel, "ts": ts, "error": str(exc)},
             )
             self._delete_slack_message(current_channel, ts, task_id, "progress")
-            self._post_final_messages(channel=channel, thread_ts=thread_ts, messages=messages, task_id=task_id, fallback=True)
+            self._post_final_messages(target=target, messages=messages, task_id=task_id, fallback=True)
 
     def _post_final_messages(
         self,
         *,
-        channel: str,
-        thread_ts: str,
+        target: SlackDeliveryTarget,
         messages: list,
         task_id: str | None = None,
         fallback: bool = False,
     ) -> None:
         for message in messages:
             try:
-                self._slack.post_message(channel=channel, thread_ts=thread_ts, text=message.text, blocks=message.blocks)
+                self._post_slack_message(target=target, text=message.text, blocks=message.blocks)
                 if task_id is not None:
                     label = "slack final fallback posted" if fallback else "slack final posted"
                     self._post_terminal_line(f"session {self.session_id} task {task_id} {label}")
@@ -497,8 +514,9 @@ class SessionWorker:
                         "worker.slack_delivery_failed",
                         {
                             "operation": "final_fallback_post" if fallback else "final_post",
-                            "channel": channel,
-                            "thread_ts": thread_ts,
+                            "channel": target.channel,
+                            "thread_ts": target.thread_ts,
+                            "mode": target.mode,
                             "error": str(exc),
                         },
                     )
@@ -507,17 +525,18 @@ class SessionWorker:
         self,
         task_id: str,
         *,
-        channel: str,
-        thread_ts: str,
+        target: SlackDeliveryTarget,
         text: str,
         blocks: list[dict] | None,
     ) -> None:
         if self._slack is None:
             return
+        if target.mode == "ephemeral":
+            return
         current = self._progress_messages.get(task_id)
         if current is None:
             try:
-                ts = self._slack.post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
+                ts = self._slack.post_message(channel=target.channel, thread_ts=target.thread_ts, text=text, blocks=blocks)
             except Exception as exc:
                 self._post_terminal_line(f"session {self.session_id} task {task_id} slack progress post failed: {exc}")
                 append_runtime_event(
@@ -527,14 +546,14 @@ class SessionWorker:
                     "worker.slack_delivery_failed",
                     {
                         "operation": "progress_post",
-                        "channel": channel,
-                        "thread_ts": thread_ts,
+                        "channel": target.channel,
+                        "thread_ts": target.thread_ts,
                         "error": str(exc),
                     },
                 )
                 return
             if ts:
-                self._progress_messages[task_id] = (channel, ts)
+                self._progress_messages[task_id] = (target.channel, ts)
                 self._post_terminal_line(f"session {self.session_id} task {task_id} slack progress posted ts={ts}")
             return
         current_channel, ts = current
@@ -550,6 +569,65 @@ class SessionWorker:
                 "worker.slack_delivery_failed",
                 {"operation": "progress_update", "channel": current_channel, "ts": ts, "error": str(exc)},
             )
+
+    def _delivery_target_for_task(self, task_id: str, row) -> SlackDeliveryTarget:
+        target = self._delivery_targets.get(task_id)
+        if target is None:
+            target = self._delivery_target_for_row(row)
+            self._delivery_targets[task_id] = target
+        return target
+
+    def _delivery_target_for_row(self, row) -> SlackDeliveryTarget:
+        thread_ts = row.slack_thread_ts or row.slack_message_ts
+        if _delivery_type_for_row(self._db, row) != "user_mention":
+            return SlackDeliveryTarget(row.slack_channel_id, thread_ts)
+        user_id = self._watched_user_id
+        if not user_id:
+            return SlackDeliveryTarget(row.slack_channel_id, thread_ts)
+        if row.slack_thread_ts:
+            return SlackDeliveryTarget(row.slack_channel_id, row.slack_thread_ts, mode="ephemeral", user=user_id)
+        return self._dm_thread_target(row, user_id=user_id)
+
+    def _dm_thread_target(self, row, *, user_id: str) -> SlackDeliveryTarget:
+        if self._slack is None:
+            return SlackDeliveryTarget(row.slack_channel_id, row.slack_message_ts)
+        permalink = _fallback_thread_link(row.slack_channel_id, row.slack_message_ts)
+        try:
+            permalink = self._slack.get_permalink(channel=row.slack_channel_id, message_ts=row.slack_message_ts) or permalink
+        except Exception as exc:
+            self._post_terminal_line(
+                f"session {self.session_id} slack permalink lookup failed for {row.slack_channel_id}:{row.slack_message_ts}: {exc}"
+            )
+        dm_channel = self._slack.open_dm(user=user_id)
+        dm_ts = self._slack.post_message(
+            channel=dm_channel,
+            thread_ts=None,
+            text=f"Reply here with guidance for the draft.\nOriginal: <{permalink}|open thread>",
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+        return SlackDeliveryTarget(dm_channel, dm_ts or row.slack_message_ts)
+
+    def _post_slack_message(
+        self,
+        *,
+        target: SlackDeliveryTarget,
+        text: str,
+        blocks: list[dict] | None,
+    ) -> str | None:
+        if self._slack is None:
+            return None
+        if target.mode == "ephemeral":
+            if target.user is None:
+                raise RuntimeError("ephemeral Slack delivery missing user")
+            return self._slack.post_ephemeral(
+                channel=target.channel,
+                user=target.user,
+                thread_ts=target.thread_ts,
+                text=text,
+                blocks=blocks,
+            )
+        return self._slack.post_message(channel=target.channel, thread_ts=target.thread_ts, text=text, blocks=blocks)
 
     def _delete_progress_message(self, task_id: str) -> None:
         if self._slack is None:
@@ -598,8 +676,14 @@ class SessionWorker:
             self._event_output(line)
 
 
-def _goal_with_slack_context(row) -> str:
+def _goal_with_slack_context(db: sqlite3.Connection, row) -> str:
     thread_ts = row.slack_thread_ts or row.slack_message_ts
+    delivery_type = _delivery_type_for_row(db, row)
+    output_instruction = (
+        "Draft a reply for the watched user to send; write in the user's voice and keep it ready to paste or send."
+        if delivery_type == "user_mention"
+        else "Reply as Innie in the Slack thread."
+    )
     return "\n\n".join(
         [
             row.text,
@@ -609,11 +693,31 @@ def _goal_with_slack_context(row) -> str:
                     f"- channel: {row.slack_channel_id}",
                     f"- thread_ts: {thread_ts}",
                     f"- message_ts: {row.slack_message_ts}",
+                    f"- response_mode: {delivery_type}",
+                    f"- output_instruction: {output_instruction}",
                     "Use the active harness environment to retrieve Slack context only when needed.",
                 ]
             ),
         ]
     )
+
+
+def _delivery_type_for_row(db: sqlite3.Connection, row) -> str:
+    if row.slack_event_id is not None:
+        trigger = db.execute(
+            "SELECT trigger_type FROM slack_triggers WHERE slack_event_id = ?",
+            (row.slack_event_id,),
+        ).fetchone()
+        if trigger is not None and trigger["trigger_type"] in {"bot_mention", "user_mention"}:
+            return str(trigger["trigger_type"])
+    session = db.execute("SELECT trigger_type FROM sessions WHERE id = ?", (row.session_id,)).fetchone()
+    if session is not None and session["trigger_type"] in {"bot_mention", "user_mention"}:
+        return str(session["trigger_type"])
+    return "bot_mention"
+
+
+def _fallback_thread_link(channel: str, message_ts: str) -> str:
+    return f"https://slack.com/app_redirect?channel={channel}&message_ts={message_ts}"
 
 
 def _event_is_set(event: asyncio.Event | None) -> bool:

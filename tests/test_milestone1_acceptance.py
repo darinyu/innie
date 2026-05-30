@@ -23,7 +23,16 @@ class FakeSlack:
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self.reactions.append((channel, timestamp, name))
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> str:
         self.messages.append((channel, thread_ts, text))
         ts = f"900.{self._next_ts}"
         self._next_ts += 1
@@ -80,7 +89,7 @@ class Milestone1AcceptanceTest(unittest.TestCase):
 
             self.assertTrue(first.decision.accepted)
             self.assertEqual(first.session.id, second.session.id)
-            self.assertEqual([("C1", "100.1", "eyes"), ("C1", "100.1", "eyes")], slack.reactions)
+            self.assertEqual([], slack.reactions)
             inbox_text = [
                 row["text"]
                 for row in db.execute("SELECT text FROM session_inbox WHERE session_id = ? ORDER BY id", (first.session.id,))
