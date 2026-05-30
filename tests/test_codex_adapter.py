@@ -116,6 +116,49 @@ class CodexCliAdapterTest(unittest.TestCase):
         self.assertEqual("/tmp/work", calls[0][1])
         self.assertEqual(b"follow up", process.stdin.data)
 
+    def test_start_task_includes_opt_in_extra_codex_exec_args(self) -> None:
+        process = FakeProcess([])
+        calls: list[tuple[tuple[str, ...], str]] = []
+
+        async def spawn(*args: str, cwd: str):
+            calls.append((args, cwd))
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+
+        async def run() -> None:
+            await adapter.start_task(
+                TaskRequest(
+                    task_id="task_1",
+                    session_id="sess_1",
+                    goal="write tests",
+                    workspace="/tmp/work",
+                    output_target="slack:D1:100.1",
+                    execution_mode="autonomous",
+                    recovery_context={},
+                )
+            )
+
+        with mock.patch.dict("os.environ", {"INNIE_CODEX_EXEC_ARGS": "--sandbox danger-full-access"}):
+            asyncio.run(run())
+
+        self.assertEqual(
+            (
+                "codex",
+                "exec",
+                "--sandbox",
+                "danger-full-access",
+                "--json",
+                "-c",
+                SYSTEM_PROMPT_ARG,
+                "--cd",
+                "/tmp/work",
+                "-",
+            ),
+            calls[0][0],
+        )
+        self.assertEqual(b"write tests", process.stdin.data)
+
     def test_maps_thread_started_to_resume_event(self) -> None:
         process = FakeProcess(
             [

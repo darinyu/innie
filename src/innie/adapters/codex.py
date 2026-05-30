@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 import asyncio
 from contextlib import suppress
 import json
+import os
+import shlex
 from typing import Any
 
 from ..harness import HarnessArtifact, HarnessCapabilities, HarnessEvent, TaskHandle, TaskRequest, TokenUsage
@@ -38,10 +40,12 @@ class CodexCliAdapter:
     async def start_task(self, request: TaskRequest) -> TaskHandle:
         resume_id = request.recovery_context.get("harness_resume_id")
         system_prompt_arg = _system_prompt_config_arg()
+        extra_args = _extra_codex_exec_args()
         if resume_id:
             args = (
                 "codex",
                 "exec",
+                *extra_args,
                 "resume",
                 "--json",
                 "-c",
@@ -53,6 +57,7 @@ class CodexCliAdapter:
             args = (
                 "codex",
                 "exec",
+                *extra_args,
                 "--json",
                 "-c",
                 system_prompt_arg,
@@ -138,6 +143,10 @@ class CodexCliAdapter:
 
 def _system_prompt_config_arg() -> str:
     return f"developer_instructions={json.dumps(load_harness_system_prompt())}"
+
+
+def _extra_codex_exec_args() -> tuple[str, ...]:
+    return tuple(shlex.split(os.environ.get("INNIE_CODEX_EXEC_ARGS", "")))
 
 
 class CodexSessionAdapter:
