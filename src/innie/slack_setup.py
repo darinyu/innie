@@ -26,6 +26,7 @@ BOT_SCOPES = [
     "files:read",
     "files:write",
     "groups:history",
+    "im:write",
     "reactions:read",
     "reactions:write",
 ]
