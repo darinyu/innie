@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from innie.db import connect, initialize_schema
-from innie.harness import HarnessCapabilities, HarnessEvent, ScriptedHarnessAdapter, TaskHandle
+from innie.harness import HarnessCapabilities, HarnessEvent, ScriptedHarnessAdapter, TaskHandle, TokenUsage
 from innie.inbox import enqueue_trigger
 from innie.runtime import SessionManager
 from innie.sessions import resolve_session_for_trigger
@@ -18,18 +18,54 @@ from innie.progress import SLACK_FINAL_TEXT_LIMIT, SLACK_SECTION_TEXT_LIMIT
 class FakeSlackReplies:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str, str]] = []
+        self.ephemerals: list[tuple[str, str, str, str | None]] = []
         self.updates: list[tuple[str, str, str]] = []
         self.deletes: list[tuple[str, str]] = []
         self.message_blocks: list[list[dict] | None] = []
         self.update_blocks: list[list[dict] | None] = []
+        self.ephemeral_blocks: list[list[dict] | None] = []
+        self.message_options: list[dict[str, bool | None]] = []
+        self.opened_dms: list[str] = []
         self._next_ts = 1
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> str:
         self.messages.append((channel, thread_ts, text))
         self.message_blocks.append(blocks)
+        self.message_options.append({"unfurl_links": unfurl_links, "unfurl_media": unfurl_media})
         ts = f"900.{self._next_ts}"
         self._next_ts += 1
         return ts
+
+    def post_ephemeral(
+        self,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: list[dict] | None = None,
+    ) -> str:
+        self.ephemerals.append((channel, user, text, thread_ts))
+        self.ephemeral_blocks.append(blocks)
+        ts = f"ephemeral.{self._next_ts}"
+        self._next_ts += 1
+        return ts
+
+    def open_dm(self, *, user: str) -> str:
+        self.opened_dms.append(user)
+        return f"D_{user}"
+
+    def get_permalink(self, *, channel: str, message_ts: str) -> str | None:
+        return f"https://slack.example/archives/{channel}/p{message_ts.replace('.', '')}"
 
     def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
         self.updates.append((channel, ts, text))
@@ -47,10 +83,26 @@ class FailingFinalUpdateSlack(FakeSlackReplies):
 
 
 class FailingProgressPostSlack(FakeSlackReplies):
-    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> str:
         if text in {"Innie is working", "working", "first", "second"}:
             raise RuntimeError("chat.postMessage failed: rate_limited")
-        return super().post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
+        return super().post_message(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=text,
+            blocks=blocks,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+        )
 
 
 class FailingProgressUpdateSlack(FakeSlackReplies):
@@ -61,15 +113,36 @@ class FailingProgressUpdateSlack(FakeSlackReplies):
 
 
 class LengthLimitedSlack(FakeSlackReplies):
-    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> str:
         if len(text) > SLACK_SECTION_TEXT_LIMIT:
             raise RuntimeError("chat.postMessage failed: msg_too_long")
-        return super().post_message(channel=channel, thread_ts=thread_ts, text=text, blocks=blocks)
+        return super().post_message(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=text,
+            blocks=blocks,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+        )
 
     def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict] | None = None) -> None:
         if len(text) > SLACK_SECTION_TEXT_LIMIT:
             raise RuntimeError("chat.update failed: msg_too_long")
         super().update_message(channel=channel, ts=ts, text=text, blocks=blocks)
+
+
+class FailingPermalinkSlack(FakeSlackReplies):
+    def get_permalink(self, *, channel: str, message_ts: str) -> str | None:
+        raise RuntimeError("chat.getPermalink failed: invalid_arguments")
 
 
 class FailingStreamAdapter:
@@ -267,15 +340,22 @@ class GoalRecordingAdapter:
         return []
 
 
-def make_trigger(event_id: str, channel: str = "D1", ts: str = "100.1", thread_ts: str | None = None) -> SlackTrigger:
+def make_trigger(
+    event_id: str,
+    channel: str = "D1",
+    ts: str = "100.1",
+    thread_ts: str | None = None,
+    trigger_type: str = "dm",
+    text: str | None = None,
+) -> SlackTrigger:
     return SlackTrigger(
         event_id=event_id,
-        trigger_type="dm",
+        trigger_type=trigger_type,
         channel_id=channel,
         message_ts=ts,
         thread_ts=thread_ts,
         sender_user_id="U1",
-        text=f"text {event_id}",
+        text=text or f"text {event_id}",
         payload={"event_id": event_id},
     )
 
@@ -1115,6 +1195,230 @@ class RuntimeTest(unittest.TestCase):
 
             progress_messages = [message for message in slack.messages if message[2].startswith("*Innie is")]
             self.assertEqual([("C1", "100.1"), ("C1", "100.1")], [(channel, thread_ts) for channel, thread_ts, _ in progress_messages])
+
+    def test_manager_posts_only_final_for_threaded_user_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvUserThread",
+                channel="C1",
+                ts="100.2",
+                thread_ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="drafting"),
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual([], slack.messages)
+            self.assertEqual([("C1", "U_DARIN", "draft reply", "100.1")], slack.ephemerals)
+
+    def test_manager_suppresses_ephemeral_progress_for_user_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvUserThread",
+                channel="C1",
+                ts="100.2",
+                thread_ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="drafting"),
+                    HarnessEvent(type="tool_use", message="lookup", payload={"tool_name": "web_search"}),
+                    HarnessEvent(type="tool_result", message="result"),
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual([("C1", "U_DARIN", "draft reply", "100.1")], slack.ephemerals)
+
+    def test_manager_does_not_post_ephemeral_progress_after_final_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvUserThread",
+                channel="C1",
+                ts="100.2",
+                thread_ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="usage", usage=TokenUsage(input_tokens=10, output_tokens=2)),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual([("C1", "U_DARIN", "draft reply", "100.1")], slack.ephemerals)
+
+    def test_manager_dm_handoff_for_root_user_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvRootUser",
+                channel="C1",
+                ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FakeSlackReplies()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="drafting"),
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual(["U_DARIN"], slack.opened_dms)
+            handoff = slack.messages[0]
+            self.assertEqual("D_U_DARIN", handoff[0])
+            self.assertIsNone(handoff[1])
+            self.assertEqual(
+                "Reply here with guidance for the draft.\nOriginal: <https://slack.example/archives/C1/p1001|open thread>",
+                handoff[2],
+            )
+            self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])
+            self.assertEqual(("D_U_DARIN", "900.2", "draft reply"), slack.updates[-1])
+
+    def test_manager_dm_handoff_falls_back_when_permalink_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvRootUser",
+                channel="C1",
+                ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FailingPermalinkSlack()
+            terminal: list[str] = []
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+                event_output=terminal.append,
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual(["U_DARIN"], slack.opened_dms)
+            self.assertEqual(
+                "Reply here with guidance for the draft.\n"
+                "Original: <https://slack.com/app_redirect?channel=C1&message_ts=100.1|open thread>",
+                slack.messages[0][2],
+            )
+            self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])
+            self.assertEqual(("D_U_DARIN", "900.1", "draft reply"), slack.messages[-1])
+            self.assertTrue(any("permalink lookup failed" in line for line in terminal))
 
     def test_manager_logs_task_started_to_terminal_not_slack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -57,15 +58,18 @@ def normalize_slack_event(
         return SlackEventDecision(False, "missing_channel_or_ts")
 
     thread_root = str(thread_ts) if thread_ts else None
-    if (
+    last_mention = _last_relevant_mention(text, bot_user_id=bot_user_id, watched_user_id=watched_user_id)
+    if last_mention is not None:
+        trigger_type = last_mention
+    elif (
         event_type == "message"
         and thread_root
         and known_thread_roots is not None
         and (channel_id, thread_root) in known_thread_roots
     ):
         trigger_type = "thread_reply"
-    elif event_type == "message" and watched_user_id and f"<@{watched_user_id}>" in text:
-        trigger_type = "user_mention"
+    elif event_type == "app_mention":
+        trigger_type = "bot_mention"
     else:
         return SlackEventDecision(False, "not_for_innie")
 
@@ -80,6 +84,16 @@ def normalize_slack_event(
         payload=payload,
     )
     return SlackEventDecision(True, "accepted", trigger)
+
+
+def _last_relevant_mention(text: str, *, bot_user_id: str, watched_user_id: str | None) -> str | None:
+    relevant = {bot_user_id: "bot_mention"}
+    if watched_user_id:
+        relevant[watched_user_id] = "user_mention"
+    last: str | None = None
+    for match in re.finditer(r"<@([A-Z0-9_]+)(?:\|[^>]+)?>", text):
+        last = relevant.get(match.group(1)) or last
+    return last
 
 
 def persist_trigger(db: sqlite3.Connection, trigger: SlackTrigger) -> None:

@@ -57,8 +57,9 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual("new", result.session_status)
             self.assertEqual("echo", result.harness_id)
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
-            self.assertIn("reaction C1 100.1 eyes", printed)
-            self.assertIn("message C1 100.1 <@U_DARIN> hello from slack", printed)
+            self.assertNotIn("reaction C1 100.1 eyes", printed)
+            self.assertIn("dm U_DARIN D_U_DARIN", printed)
+            self.assertIn("message D_U_DARIN 900.1 <@U_DARIN> hello from slack", printed)
 
     def test_run_once_payload_verbose_logs_session_before_harness_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -309,7 +310,7 @@ class RunnerTest(unittest.TestCase):
             )
 
             self.assertTrue(result.accepted)
-            self.assertIn("message C1 100.1 <@U_DARIN> hello from socket", printed)
+            self.assertIn("message D_U_DARIN 900.1 <@U_DARIN> hello from socket", printed)
 
     def test_run_once_socket_ignores_self_echo_until_first_accepted_event(self) -> None:
         class FakeEventSource:
@@ -350,7 +351,7 @@ class RunnerTest(unittest.TestCase):
                 "ignored event: self_echo event_id=EvSelf type=message channel=C1 ts=99.1 user=U_BOT bot_id=B1 text=Task completed.",
                 printed,
             )
-            self.assertIn("message C1 100.1 <@U_DARIN> hello after self echo", printed)
+            self.assertIn("message D_U_DARIN 900.1 <@U_DARIN> hello after self echo", printed)
 
     def test_run_forever_socket_processes_until_event_source_stops(self) -> None:
         class FakeEventSource:
@@ -380,8 +381,8 @@ class RunnerTest(unittest.TestCase):
             self.assertIn("waiting for Slack event #1", printed)
             self.assertIn("waiting for Slack event #2", printed)
             self.assertIn("stopped after 2 accepted event(s)", printed)
-            self.assertIn("message C1 100.1 <@U_DARIN> first", printed)
-            self.assertIn("message C1 100.2 <@U_DARIN> second", printed)
+            self.assertIn("message D_U_DARIN 900.1 <@U_DARIN> first", printed)
+            self.assertIn("message D_U_DARIN 900.2 <@U_DARIN> second", printed)
 
     def test_run_forever_socket_keeps_receiving_while_worker_is_busy(self) -> None:
         class GateAdapter:
@@ -440,8 +441,8 @@ class RunnerTest(unittest.TestCase):
 
             self.assertEqual(2, processed)
             self.assertIn("waiting for Slack event #2", printed)
-            self.assertIn("message C1 100.1 done", printed)
-            self.assertIn("message C1 200.1 done", printed)
+            self.assertIn("message D_U_DARIN 900.1 done", printed)
+            self.assertIn("message D_U_DARIN 900.2 done", printed)
 
     def test_run_forever_socket_starts_new_session_while_first_task_is_running(self) -> None:
         class OverlapAdapter:
@@ -521,7 +522,16 @@ class RunnerTest(unittest.TestCase):
                 super().__init__(output=lambda _line: None)
                 self.messages: list[tuple[str, str, str]] = []
 
-            def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict] | None = None) -> str:
+            def post_message(
+                self,
+                *,
+                channel: str,
+                thread_ts: str | None,
+                text: str,
+                blocks: list[dict] | None = None,
+                unfurl_links: bool | None = None,
+                unfurl_media: bool | None = None,
+            ) -> str:
                 self.messages.append((channel, thread_ts, text))
                 return thread_ts
 
@@ -549,7 +559,7 @@ class RunnerTest(unittest.TestCase):
                     output=lambda _line: None,
                 )
 
-            self.assertIn(("C1", "100.1", "<@U_DARIN> hello without explicit slack"), slack.messages)
+            self.assertIn(("D_U_DARIN", "100.1", "<@U_DARIN> hello without explicit slack"), slack.messages)
 
     def test_run_forever_socket_reports_existing_session_for_thread_reply(self) -> None:
         class FakeEventSource:

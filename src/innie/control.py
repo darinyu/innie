@@ -10,10 +10,29 @@ class SlackReplyClient(Protocol):
         self,
         *,
         channel: str,
-        thread_ts: str,
+        thread_ts: str | None,
         text: str,
         blocks: list[dict[str, Any]] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
     ) -> str | None:
+        ...
+
+    def post_ephemeral(
+        self,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        ...
+
+    def open_dm(self, *, user: str) -> str:
+        ...
+
+    def get_permalink(self, *, channel: str, message_ts: str) -> str | None:
         ...
 
     def update_message(

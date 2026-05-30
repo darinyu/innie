@@ -29,15 +29,52 @@ class SlackWebClient:
         self,
         *,
         channel: str,
-        thread_ts: str,
+        thread_ts: str | None,
         text: str,
         blocks: list[dict[str, Any]] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
     ) -> str | None:
-        payload: dict[str, Any] = {"channel": channel, "thread_ts": thread_ts, "text": text}
+        payload: dict[str, Any] = {"channel": channel, "text": text}
+        if thread_ts is not None:
+            payload["thread_ts"] = thread_ts
         if blocks is not None:
             payload["blocks"] = blocks
+        if unfurl_links is not None:
+            payload["unfurl_links"] = unfurl_links
+        if unfurl_media is not None:
+            payload["unfurl_media"] = unfurl_media
         result = self._post_json("chat.postMessage", payload)
         return result.get("ts")
+
+    def post_ephemeral(
+        self,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        payload: dict[str, Any] = {"channel": channel, "user": user, "text": text}
+        if thread_ts is not None:
+            payload["thread_ts"] = thread_ts
+        if blocks is not None:
+            payload["blocks"] = blocks
+        result = self._post_json("chat.postEphemeral", payload)
+        return result.get("message_ts")
+
+    def open_dm(self, *, user: str) -> str:
+        result = self._post_json("conversations.open", {"users": user})
+        channel = result.get("channel")
+        if not isinstance(channel, dict) or not channel.get("id"):
+            raise SlackApiError("conversations.open failed: missing_channel")
+        return str(channel["id"])
+
+    def get_permalink(self, *, channel: str, message_ts: str) -> str | None:
+        result = self._post_json("chat.getPermalink", {"channel": channel, "message_ts": message_ts})
+        permalink = result.get("permalink")
+        return str(permalink) if permalink else None
 
     def update_message(
         self,

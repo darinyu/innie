@@ -34,13 +34,48 @@ class RunOnceResult:
 class ConsoleSlackClient:
     def __init__(self, *, output: OutputFn = print) -> None:
         self._output = output
+        self._next_ts = 1
 
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self._output(f"reaction {channel} {timestamp} {name}")
 
-    def post_message(self, *, channel: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None) -> str:
+    def post_message(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> str:
+        if thread_ts is None:
+            ts = f"900.{self._next_ts}"
+            self._next_ts += 1
+            self._output(f"message {channel} root {text}")
+            return ts
         self._output(f"message {channel} {thread_ts} {text}")
         return thread_ts
+
+    def post_ephemeral(
+        self,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> str:
+        self._output(f"ephemeral {channel} {user} {thread_ts or ''} {text}".rstrip())
+        return thread_ts or "ephemeral"
+
+    def open_dm(self, *, user: str) -> str:
+        channel = f"D_{user}"
+        self._output(f"dm {user} {channel}")
+        return channel
+
+    def get_permalink(self, *, channel: str, message_ts: str) -> str | None:
+        return f"https://slack.example/archives/{channel}/p{message_ts.replace('.', '')}"
 
     def update_message(self, *, channel: str, ts: str, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
         self._output(f"update {channel} {ts} {text}")
@@ -244,6 +279,7 @@ async def _run_forever_socket_async(
                         workspace,
                         slack=result.resolved_slack or selected_slack,
                         adapters=adapters,
+                        watched_user_id=selected_watched_user_id,
                         verbose=verbose,
                         output=output,
                         max_workers=max_workers,
@@ -397,6 +433,7 @@ async def process_payload(
             workspace,
             slack=slack,
             adapters=adapters,
+            watched_user_id=watched_user_id,
             verbose=verbose,
             output=output,
             max_workers=max_workers,
@@ -409,6 +446,7 @@ async def _drain_workspace(
     *,
     slack,
     adapters: dict[str, HarnessAdapter] | None,
+    watched_user_id: str | None,
     verbose: bool,
     output: OutputFn | None,
     max_workers: int,
@@ -422,6 +460,7 @@ async def _drain_workspace(
         slack=slack,
         workspace=workspace,
         event_output=output if verbose else None,
+        watched_user_id=watched_user_id,
         max_workers=max_workers,
         session_worker_idle_ttl_seconds=session_worker_idle_ttl_seconds,
         stop_when_idle=stop_when_idle,
