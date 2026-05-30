@@ -61,12 +61,15 @@ Your dev environment
 
 ## Quickstart
 
-The path is:
+This path gets a local checkout connected to Slack, verifies one routed event,
+and then leaves you with a continuous Innie worker plus a local dashboard.
 
-1. Download the repo.
-2. Check and install dependencies with the provided script.
-3. Set up the Slack bot with the guided setup wizard.
-4. Start the fun.
+Before you start, have:
+
+- Python 3.10+.
+- A Slack workspace where you can create and install an app.
+- Codex CLI or Claude Code installed in the same environment where Innie will
+  run. Codex is the default harness; Claude is opt-in.
 
 ### 1. Download The Repo
 
@@ -75,27 +78,41 @@ git clone https://github.com/darinyu/innie.git
 cd innie
 ```
 
-### 2. Check And Install Dependencies
+### 2. Install The Local Command
 
-Install the `innie` command from this checkout. The provided script checks local
-dependencies and installs or refreshes the command. It is safe to rerun after
-pulling updates:
+Install the `innie` command from this checkout:
 
 ```bash
 python3 scripts/install.py
 ```
 
+The installer checks runtime dependencies, offers to install the optional Rich
+terminal UI, and writes or refreshes an `innie` launcher. It is safe to rerun
+after pulling updates.
+
+If the printed install directory is not on your shell `PATH`, add it before
+continuing. The default is usually `~/.local/bin`.
+
 ### 3. Set Up The Slack Bot
 
-Create local state and start the guided Slack setup wizard:
+Create local state and start the Slack app wizard:
 
 ```bash
 innie init
 ```
 
-It is safe to rerun `innie init`. Existing local state and Slack configuration
-are kept; rerun `innie slack setup` when you intentionally want to update Slack
-tokens or app settings.
+The wizard takes about 5-8 minutes. It writes a Slack manifest to
+`.innie/slack-manifest.json`, walks you through creating the Slack app, stores
+Slack tokens locally, and writes non-secret metadata to `.innie/config.yaml`.
+
+At the end of setup, invite the Slack app to each channel where Innie should
+listen. In Slack, type:
+
+```text
+/invite @Innie
+```
+
+Use the bot display name you chose if you renamed it.
 
 To create local state without Slack setup:
 
@@ -112,40 +129,32 @@ innie slack setup
 For the guided Slack checklist, see
 [`docs/slack-setup.md`](docs/slack-setup.md).
 
-### 4. Start The Fun
+### 4. Run One Slack Smoke Test
 
-Run a first Slack-routed smoke test, then keep Innie running when you are ready:
-
-```bash
-innie run --once --harness codex
-innie run
-```
-
-## Run
-
-Test the local route without Slack by feeding one Slack-shaped event file through
-the diagnostic echo adapter:
-
-```bash
-innie run --once --event-file event.json --harness echo
-```
-
-After `innie slack setup`, test one real Slack-routed Codex event and exit:
+Start Innie in one-event mode:
 
 ```bash
 innie run --once --harness codex
 ```
 
-Claude Code is available as an opt-in peer harness:
+In Slack, tag either the bot or the configured watched user in a channel where
+the app is installed:
 
-```bash
-innie run --once --harness claude
+```text
+@Innie hello
 ```
 
-`--once` is a smoke-test mode: Innie connects, waits for one routed Slack event,
-processes it, prints the session id and log command, then exits.
+When Innie accepts the event, it processes one task, prints the session id and a
+log command, replies in Slack, and exits. Use the log command if you want to
+inspect the durable session:
 
-Run continuously with:
+```bash
+innie logs <session_id>
+```
+
+### 5. Keep Innie Running
+
+Run continuously when the smoke test works:
 
 ```bash
 innie run
@@ -153,8 +162,63 @@ innie run
 
 Stop it with Ctrl-C.
 
-Use `--harness echo` when you want to debug Slack routing without starting
-Codex or Claude.
+Open the local dashboard in another terminal:
+
+```bash
+innie dash
+```
+
+By default, the dashboard listens on `http://127.0.0.1:8765`. It is read-only
+and can run beside `innie run`.
+
+## Run
+
+Use `--once` whenever you want a bounded smoke test: Innie connects, waits for
+one accepted Slack event, processes it, prints the session id and log command,
+then exits.
+
+Run with Claude Code instead of Codex:
+
+```bash
+innie run --once --harness claude
+```
+
+Run the diagnostic echo adapter when you want to test routing without starting
+Codex or Claude:
+
+```bash
+innie run --once --event-file event.json --harness echo
+```
+
+Run continuously with a specific harness:
+
+```bash
+innie run --harness codex
+```
+
+Useful inspection commands:
+
+```bash
+innie status <session_id>
+innie logs <session_id>
+innie cancel <session_id>
+innie cleanup
+```
+
+`innie cleanup` is a dry run by default. Pass `--apply` only when you are ready
+to delete eligible old completed local task state.
+
+## Troubleshooting First Run
+
+- `innie: command not found`: add the installer output directory to `PATH`, or
+  rerun `python3 scripts/install.py --bin-dir <directory-on-your-path>`.
+- `Slack bot user id is missing`: run `innie slack setup` again and complete the
+  wizard.
+- Innie never accepts your Slack message: invite the app to the channel, confirm
+  the bot or watched user was mentioned, and try `innie run --once --harness echo`
+  to isolate Slack routing from harness behavior.
+- Codex or Claude does not start: confirm the selected CLI works from the same
+  shell where you started `innie run`.
 
 ## Development
 
@@ -180,13 +244,16 @@ local inspection of sessions, task events, hooks, artifacts, health, and logs.
 Read [`docs/initial-plan.md`](docs/initial-plan.md) for the current product and
 architecture plan.
 
-## PyPI
+## Install From PyPI
 
 Innie is published on PyPI as an alpha package:
 
 ```bash
 pipx install innie
 ```
+
+For local development, prefer the checkout install path in Quickstart so changes
+in `src/` are easy to inspect and test.
 
 The release path builds clean wheel and source distributions, validates package
 metadata, smoke-tests the installed wheel in CI, and publishes through PyPI
@@ -199,7 +266,8 @@ release checklist.
 - SQLite 3 for local durable session state.
 - Rich for colored, wrapped terminal setup screens. `scripts/install.py` asks
   before installing it, and Innie falls back to plain text if you skip it.
-- A Slack app installed in channels where Innie should respond when people tag you.
+- A Slack app installed in channels where Innie should respond when people tag
+  the bot or the watched user.
 - Codex CLI or Claude Code CLI. Codex remains the default; Claude is opt-in via
   `--harness claude`. OpenCode, Goose, and custom runtimes are future adapters.
 - Optional MCP servers, skills, CLIs, and credentials from your own dev
@@ -208,7 +276,16 @@ release checklist.
 ## Local State And Secrets
 
 Innie stores local runtime state under `.innie/` in the selected workspace.
-Slack tokens and generated Slack metadata are part of that setup flow.
+Important files include:
+
+- `.innie/config.yaml`: non-secret workspace and Slack metadata.
+- `.innie/secrets.json`: local Slack tokens.
+- `.innie/innie.db`: durable sessions, tasks, progress, hooks, and artifacts.
+- `.innie/logs/innie.log`: local run logs.
+
+It is safe to rerun `innie init`. Existing local state and Slack configuration
+are kept. Rerun `innie slack setup` when you intentionally want to update Slack
+tokens or app settings.
 
 Do not commit `.innie/` or Slack credentials. The prototype is designed for
 local development first, so review generated files and permissions before using
