@@ -20,6 +20,20 @@ def run_server(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServ
 
 
 class SlackWebClientTest(unittest.TestCase):
+    def test_workspace_url_uses_auth_test_once(self) -> None:
+        calls: list[tuple[str, dict]] = []
+
+        class FakeClient(SlackWebClient):
+            def api_call(self, method: str, payload: dict) -> dict:
+                calls.append((method, payload))
+                return {"ok": True, "url": "https://paofuanddddd.slack.com/"}
+
+        client = FakeClient("xoxb-test-token")
+
+        self.assertEqual("https://paofuanddddd.slack.com/", client.workspace_url())
+        self.assertEqual("https://paofuanddddd.slack.com/", client.workspace_url())
+        self.assertEqual([("auth.test", {})], calls)
+
     def test_download_file_keeps_authorization_across_redirects(self) -> None:
         token = "xoxb-test-token"
         actual_body = b"actual file contents\n"
