@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any
@@ -16,6 +17,12 @@ class SlackApiError(RuntimeError):
 DOWNLOAD_TIMEOUT_SECONDS = 60
 API_TIMEOUT_SECONDS = 30
 SLACK_LOGIN_SAMPLE_BYTES = 128 * 1024
+
+
+@dataclass(frozen=True)
+class SlackPostResult:
+    channel: str
+    ts: str | None
 
 
 class SlackWebClient:
@@ -36,6 +43,25 @@ class SlackWebClient:
         unfurl_links: bool | None = None,
         unfurl_media: bool | None = None,
     ) -> str | None:
+        return self.post_message_result(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=text,
+            blocks=blocks,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+        ).ts
+
+    def post_message_result(
+        self,
+        *,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> SlackPostResult:
         payload: dict[str, Any] = {"channel": channel, "text": text}
         if thread_ts is not None:
             payload["thread_ts"] = thread_ts
@@ -46,7 +72,25 @@ class SlackWebClient:
         if unfurl_media is not None:
             payload["unfurl_media"] = unfurl_media
         result = self._post_json("chat.postMessage", payload)
-        return result.get("ts")
+        return SlackPostResult(channel=str(result.get("channel") or channel), ts=result.get("ts"))
+
+    def post_direct_message(
+        self,
+        *,
+        user: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> SlackPostResult:
+        return self.post_message_result(
+            channel=user,
+            thread_ts=None,
+            text=text,
+            blocks=blocks,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+        )
 
     def post_ephemeral(
         self,
@@ -118,7 +162,7 @@ class SlackWebClient:
     def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         result = self._post_json_result(method, payload)
         if not result.get("ok"):
-            raise SlackApiError(f"{method} failed: {result.get('error', 'unknown_error')}")
+            raise SlackApiError(_slack_error_message(method, result))
         return result
 
     def _post_json_result(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -179,3 +223,15 @@ def _form_value(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, separators=(",", ":"))
     return str(value)
+
+
+def _slack_error_message(method: str, result: dict[str, Any]) -> str:
+    message = f"{method} failed: {result.get('error', 'unknown_error')}"
+    details = []
+    for key in ("needed", "provided"):
+        value = result.get(key)
+        if value:
+            details.append(f"{key}={value}")
+    if details:
+        message = f"{message} ({', '.join(details)})"
+    return message

@@ -606,14 +606,26 @@ class SessionWorker:
             if workspace_link:
                 permalink = workspace_link
                 unfurl_original_thread = True
-        dm_channel = self._slack.open_dm(user=user_id)
-        dm_ts = self._slack.post_message(
-            channel=dm_channel,
-            thread_ts=None,
-            text=_dm_handoff_text(row, permalink, raw_thread_link=unfurl_original_thread),
-            unfurl_links=unfurl_original_thread,
-            unfurl_media=False,
-        )
+        handoff_text = _dm_handoff_text(row, permalink, raw_thread_link=unfurl_original_thread)
+        post_direct_message = getattr(self._slack, "post_direct_message", None)
+        if callable(post_direct_message):
+            dm_result = post_direct_message(
+                user=user_id,
+                text=handoff_text,
+                unfurl_links=unfurl_original_thread,
+                unfurl_media=False,
+            )
+            dm_channel = str(dm_result.channel)
+            dm_ts = dm_result.ts
+        else:
+            dm_channel = self._slack.open_dm(user=user_id)
+            dm_ts = self._slack.post_message(
+                channel=dm_channel,
+                thread_ts=None,
+                text=handoff_text,
+                unfurl_links=unfurl_original_thread,
+                unfurl_media=False,
+            )
         return SlackDeliveryTarget(dm_channel, dm_ts or row.slack_message_ts)
 
     def _workspace_thread_link(self, channel: str, message_ts: str) -> str | None:
