@@ -1386,9 +1386,8 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual("D_U_DARIN", handoff[0])
             self.assertIsNone(handoff[1])
             self.assertEqual(
-                "Reply here with guidance for the draft.\n"
-                "> <@U_DARIN> draft my reply\n"
-                "Thread: <https://slack.example/archives/C1/p1001|open thread>",
+                "Hi, here is the <https://slack.example/archives/C1/p1001|open thread> you are tagged on. "
+                "Let me help draft a reply.",
                 handoff[2],
             )
             self.assertEqual({"unfurl_links": True, "unfurl_media": False}, slack.message_options[0])
@@ -1437,9 +1436,8 @@ class RuntimeTest(unittest.TestCase):
                 (
                     "D_REAL_U_DARIN",
                     None,
-                    "Reply here with guidance for the draft.\n"
-                    "> <@U_DARIN> draft my reply\n"
-                    "Thread: <https://slack.example/archives/C1/p1001|open thread>",
+                    "Hi, here is the <https://slack.example/archives/C1/p1001|open thread> you are tagged on. "
+                    "Let me help draft a reply.",
                 ),
                 slack.messages[0],
             )
@@ -1486,9 +1484,8 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(["U_DARIN"], slack.opened_dms)
             self.assertEqual(
-                "Reply here with guidance for the draft.\n"
-                "> <@U_DARIN> draft my reply\n"
-                "Thread: <https://slack.com/app_redirect?channel=C1&message_ts=100.1|open thread>",
+                "Hi, here is the <https://slack.com/app_redirect?channel=C1&message_ts=100.1|open thread> "
+                "you are tagged on. Let me help draft a reply.",
                 slack.messages[0][2],
             )
             self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])
@@ -1533,9 +1530,8 @@ class RuntimeTest(unittest.TestCase):
                 manager.close()
 
             self.assertEqual(
-                "Reply here with guidance for the draft.\n"
-                "> <@U_DARIN> draft my reply\n"
-                "Thread: <https://paofuanddddd.slack.com/archives/C1/p1001|open thread>",
+                "Hi, here is the <https://paofuanddddd.slack.com/archives/C1/p1001|open thread> you are tagged on. "
+                "Let me help draft a reply.",
                 slack.messages[0][2],
             )
             self.assertEqual({"unfurl_links": True, "unfurl_media": False}, slack.message_options[0])
