@@ -103,7 +103,9 @@ innie init
 
 The wizard takes about 5-8 minutes. It writes a Slack manifest to
 `.innie/slack-manifest.json`, walks you through creating the Slack app, stores
-Slack tokens locally, and writes non-secret metadata to `.innie/config.yaml`.
+Slack tokens in the configured secret store, and writes non-secret metadata to
+`.innie/config.yaml`. By default, the secret store is local file storage at
+`.innie/secrets.json` with `0600` permissions.
 
 At the end of setup, invite the Slack app to each channel where Innie should
 listen. In Slack, type:
@@ -279,7 +281,8 @@ Innie stores local runtime state under `.innie/` in the selected workspace.
 Important files include:
 
 - `.innie/config.yaml`: non-secret workspace and Slack metadata.
-- `.innie/secrets.json`: local Slack tokens.
+- `.innie/secrets.json`: local Slack tokens when using the default local file
+  secret store.
 - `.innie/innie.db`: durable sessions, tasks, progress, hooks, and artifacts.
 - `.innie/logs/innie.log`: local run logs.
 
@@ -290,6 +293,20 @@ tokens or app settings.
 Do not commit `.innie/` or Slack credentials. The prototype is designed for
 local development first, so review generated files and permissions before using
 it in a shared or remote environment.
+
+Secret storage is intentionally behind a provider boundary. The default provider
+is local file storage, but `.innie/config.yaml` can point at another provider:
+
+```yaml
+secrets:
+  provider: local
+  path: .innie/secrets.json
+```
+
+Company deployments can register or package a provider such as `vault`,
+`aws-secrets-manager`, or another remote store via the `innie.secret_stores`
+entry point. Innie keeps Slack tokens out of harness requests; adapters receive
+Slack coordinates and task context, not Slack credentials.
 
 ## Roadmap
 

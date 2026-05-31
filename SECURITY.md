@@ -29,3 +29,18 @@ maintainer through GitHub profile contact channels and include:
 - Review generated Slack manifests before sharing them.
 - Run Innie only in environments where the selected harness should have access
   to the repositories, CLIs, MCP servers, and credentials available there.
+
+Innie reads Slack credentials through a secret-store boundary. The default
+provider stores local JSON at `.innie/secrets.json` with `0600` permissions.
+Company or hosted deployments should register a provider backed by an approved
+remote store and configure it in `.innie/config.yaml`:
+
+```yaml
+secrets:
+  provider: vault
+  path: team/innie/slack
+```
+
+Harness adapters receive Slack channel, message, and thread coordinates as task
+context. They should not receive Slack bot tokens, app-level tokens, client
+secrets, or secret-store handles.

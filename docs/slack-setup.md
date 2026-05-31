@@ -153,5 +153,17 @@ Innie validates:
 
 - bot token works with Slack auth
 - Socket Mode can open
-- tokens are stored locally with restrictive permissions
+- tokens are written to the configured secret store
 - non-secret Slack metadata is written to `.innie/config.yaml`
+
+The default secret store is local file storage:
+
+```yaml
+secrets:
+  provider: local
+  path: .innie/secrets.json
+```
+
+Local files are written with `0600` permissions. If your company requires a
+remote store, preconfigure a different `secrets.provider` and install or
+register the matching `innie.secret_stores` provider before running setup.
