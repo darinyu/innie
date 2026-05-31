@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest import mock
 
-from innie.adapters.codex import CODEX_STREAM_LIMIT_BYTES, CodexCliAdapter, CodexSessionAdapter
+from innie.adapters.codex import CODEX_STDOUT_READ_BYTES, CodexCliAdapter, CodexSessionAdapter
 from innie.harness import TaskRequest
 from innie.prompts import load_harness_system_prompt
 
@@ -64,6 +64,23 @@ class FakeStdout:
         if self._json_lines:
             return (json.dumps(line) + "\n").encode("utf-8")
         return (str(line) + "\n").encode("utf-8")
+
+
+class FakeChunkedStdout:
+    def __init__(self, data: bytes, *, chunk_size: int) -> None:
+        self._data = data
+        self._chunk_size = chunk_size
+        self._offset = 0
+
+    async def read(self, n: int = -1) -> bytes:
+        await asyncio.sleep(0)
+        if self._offset >= len(self._data):
+            return b""
+        limit = self._chunk_size if n < 0 else min(self._chunk_size, n)
+        end = min(len(self._data), self._offset + limit)
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
 
 
 class CodexCliAdapterTest(unittest.TestCase):
@@ -245,12 +262,42 @@ class CodexCliAdapterTest(unittest.TestCase):
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stdin"])
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stdout"])
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stderr"])
-            self.assertEqual(CODEX_STREAM_LIMIT_BYTES, spawn.call_args.kwargs["limit"])
+            self.assertNotIn("limit", spawn.call_args.kwargs)
             self.assertEqual(b"write tests", process.stdin.data)
             self.assertTrue(process.stdin.closed)
             self.assertTrue(process.stdin.waited_closed)
 
         asyncio.run(run())
+
+    def test_stream_events_reads_large_json_lines_without_readline_limit(self) -> None:
+        message = "x" * (CODEX_STDOUT_READ_BYTES * 2)
+        process = FakeProcess([])
+        process.stdout = FakeChunkedStdout(
+            (json.dumps({"type": "agent_message", "message": message}) + "\n").encode("utf-8"),
+            chunk_size=1024,
+        )
+
+        async def spawn(*args: str, cwd: str):
+            return process
+
+        adapter = CodexCliAdapter(spawn=spawn)
+        request = TaskRequest(
+            task_id="task_1",
+            session_id="sess_1",
+            goal="write tests",
+            workspace="/tmp/work",
+            output_target="slack:D1:100.1",
+            execution_mode="autonomous",
+            recovery_context={},
+        )
+
+        async def run() -> list[tuple[str, str | None]]:
+            handle = await adapter.start_task(request)
+            return [(event.type, event.message) async for event in adapter.stream_events(handle.task_id)]
+
+        events = asyncio.run(run())
+
+        self.assertEqual([("output", message), ("completed", "Codex completed.")], events)
 
     def test_stderr_is_reported_on_failure_not_streamed_as_progress(self) -> None:
         process = FakeProcess([], returncode=1, stderr_lines=["state warning", "codex failed"])
