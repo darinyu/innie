@@ -57,6 +57,7 @@ include = [
     "/CHANGELOG.md",
     "/CONTRIBUTING.md",
     "/SECURITY.md",
+    "/agent",
     "/docs/pypi-release.md",
     "/.github/workflows",
 ]
