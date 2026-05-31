@@ -150,6 +150,22 @@ class FailingPermalinkWorkspaceSlack(FailingPermalinkSlack):
         return "https://paofuanddddd.slack.com/"
 
 
+class DirectMessageSlack(FakeSlackReplies):
+    def post_direct_message(
+        self,
+        *,
+        user: str,
+        text: str,
+        blocks: list[dict] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ):
+        self.messages.append((f"D_REAL_{user}", None, text))
+        self.message_blocks.append(blocks)
+        self.message_options.append({"unfurl_links": unfurl_links, "unfurl_media": unfurl_media})
+        return type("SlackPostResult", (), {"channel": f"D_REAL_{user}", "ts": "900.8"})()
+
+
 class FailingStreamAdapter:
     harness_id = "failing"
     capabilities = HarnessCapabilities(supports_streaming=True)
@@ -1378,6 +1394,58 @@ class RuntimeTest(unittest.TestCase):
             )
             self.assertEqual({"unfurl_links": True, "unfurl_media": False}, slack.message_options[0])
             self.assertEqual(("D_U_DARIN", "900.2", "draft reply"), slack.updates[-1])
+
+    def test_manager_dm_handoff_posts_directly_to_user_without_opening_dm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvRootUserDirect",
+                channel="C1",
+                ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = DirectMessageSlack()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="progress", message="drafting"),
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual([], slack.opened_dms)
+            self.assertEqual(
+                (
+                    "D_REAL_U_DARIN",
+                    None,
+                    "Reply here with guidance for the draft.\n"
+                    "Original message:\n"
+                    "> <@U_DARIN> draft my reply\n"
+                    "Original thread: https://slack.example/archives/C1/p1001",
+                ),
+                slack.messages[0],
+            )
+            self.assertEqual(("D_REAL_U_DARIN", "900.1", "draft reply"), slack.updates[-1])
 
     def test_manager_dm_handoff_falls_back_when_permalink_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

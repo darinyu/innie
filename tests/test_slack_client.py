@@ -9,7 +9,7 @@ import threading
 import unittest
 from unittest import mock
 
-from innie.slack_client import SlackWebClient
+from innie.slack_client import SlackApiError, SlackWebClient
 
 
 def run_server(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, threading.Thread]:
@@ -20,6 +20,49 @@ def run_server(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServ
 
 
 class SlackWebClientTest(unittest.TestCase):
+    def test_post_direct_message_uses_user_id_and_returns_dm_channel(self) -> None:
+        calls: list[tuple[str, dict]] = []
+
+        class FakeClient(SlackWebClient):
+            def api_call(self, method: str, payload: dict) -> dict:
+                calls.append((method, payload))
+                return {"ok": True, "channel": "D123", "ts": "171.2"}
+
+        result = FakeClient("xoxb-test-token").post_direct_message(
+            user="U123",
+            text="handoff",
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+
+        self.assertEqual("D123", result.channel)
+        self.assertEqual("171.2", result.ts)
+        self.assertEqual(
+            [
+                (
+                    "chat.postMessage",
+                    {"channel": "U123", "text": "handoff", "unfurl_links": False, "unfurl_media": False},
+                )
+            ],
+            calls,
+        )
+
+    def test_slack_api_error_includes_missing_scope_details(self) -> None:
+        class FakeClient(SlackWebClient):
+            def api_call(self, method: str, payload: dict) -> dict:
+                return {
+                    "ok": False,
+                    "error": "missing_scope",
+                    "needed": "im:write",
+                    "provided": "chat:write",
+                }
+
+        with self.assertRaisesRegex(
+            SlackApiError,
+            r"chat.postMessage failed: missing_scope \(needed=im:write, provided=chat:write\)",
+        ):
+            FakeClient("xoxb-test-token").post_message(channel="U123", thread_ts=None, text="handoff")
+
     def test_workspace_url_uses_auth_test_once(self) -> None:
         calls: list[tuple[str, dict]] = []
 
