@@ -1365,7 +1365,10 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual("D_U_DARIN", handoff[0])
             self.assertIsNone(handoff[1])
             self.assertEqual(
-                "Reply here with guidance for the draft.\nOriginal: <https://slack.example/archives/C1/p1001|open thread>",
+                "Reply here with guidance for the draft.\n"
+                "Original message:\n"
+                "> <@U_DARIN> draft my reply\n"
+                "Original thread: <https://slack.example/archives/C1/p1001|open thread>",
                 handoff[2],
             )
             self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])
@@ -1413,7 +1416,9 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(["U_DARIN"], slack.opened_dms)
             self.assertEqual(
                 "Reply here with guidance for the draft.\n"
-                "Original: <https://slack.com/app_redirect?channel=C1&message_ts=100.1|open thread>",
+                "Original message:\n"
+                "> <@U_DARIN> draft my reply\n"
+                "Original thread: <https://slack.com/app_redirect?channel=C1&message_ts=100.1|open thread>",
                 slack.messages[0][2],
             )
             self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])

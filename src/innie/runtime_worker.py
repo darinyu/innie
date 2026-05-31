@@ -602,7 +602,7 @@ class SessionWorker:
         dm_ts = self._slack.post_message(
             channel=dm_channel,
             thread_ts=None,
-            text=f"Reply here with guidance for the draft.\nOriginal: <{permalink}|open thread>",
+            text=_dm_handoff_text(row, permalink),
             unfurl_links=False,
             unfurl_media=False,
         )
@@ -718,6 +718,28 @@ def _delivery_type_for_row(db: sqlite3.Connection, row) -> str:
 
 def _fallback_thread_link(channel: str, message_ts: str) -> str:
     return f"https://slack.com/app_redirect?channel={channel}&message_ts={message_ts}"
+
+
+def _dm_handoff_text(row, permalink: str) -> str:
+    original = _compact_original_text(str(row.text or ""))
+    if not original:
+        return f"Reply here with guidance for the draft.\nOriginal thread: <{permalink}|open thread>"
+    return (
+        "Reply here with guidance for the draft.\n"
+        f"Original message:\n{_slack_quote(original)}\n"
+        f"Original thread: <{permalink}|open thread>"
+    )
+
+
+def _compact_original_text(text: str, *, limit: int = 500) -> str:
+    compact = "\n".join(line.strip() for line in text.strip().splitlines() if line.strip())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _slack_quote(text: str) -> str:
+    return "\n".join(f"> {line}" for line in text.splitlines() if line)
 
 
 def _event_is_set(event: asyncio.Event | None) -> bool:
