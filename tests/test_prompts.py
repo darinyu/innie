@@ -14,6 +14,7 @@ class HarnessSystemPromptTest(unittest.TestCase):
         self.assertIn("active harness environment", prompt)
         self.assertIn("on that user's behalf", prompt)
         self.assertIn("Slack-friendly", prompt)
+        self.assertIn("Cache-sensitive variable context is appended at the end", prompt)
 
 
 if __name__ == "__main__":

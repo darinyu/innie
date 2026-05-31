@@ -408,11 +408,16 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(1, len(adapter.goals))
             goal = adapter.goals[0]
             self.assertIn("text EvSlack", goal)
-            self.assertIn("Slack trigger context:", goal)
+            self.assertIn("Variable turn context:", goal)
+            self.assertIn("Slack trigger:", goal)
             self.assertIn("- channel: C1", goal)
             self.assertIn("- thread_ts: 100.1", goal)
             self.assertIn("- message_ts: 100.3", goal)
-            self.assertIn("Use the active harness environment to retrieve Slack context only when needed.", goal)
+            self.assertIn("- routing_note: Innie will route the final answer back to the Slack destination above.", goal)
+            self.assertIn(
+                "- context_lookup: Use the active harness environment to inspect Slack only when the task needs more thread context.",
+                goal,
+            )
 
     def _assert_manager_appends_slack_file_paths_to_goal(self, harness_id: str) -> None:
         with tempfile.TemporaryDirectory() as tmp:
