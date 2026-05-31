@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest import mock
 
-from innie.adapters.codex import CodexCliAdapter, CodexSessionAdapter
+from innie.adapters.codex import CODEX_STREAM_LIMIT_BYTES, CodexCliAdapter, CodexSessionAdapter
 from innie.harness import TaskRequest
 from innie.prompts import load_harness_system_prompt
 
@@ -245,6 +245,7 @@ class CodexCliAdapterTest(unittest.TestCase):
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stdin"])
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stdout"])
             self.assertEqual(asyncio.subprocess.PIPE, spawn.call_args.kwargs["stderr"])
+            self.assertEqual(CODEX_STREAM_LIMIT_BYTES, spawn.call_args.kwargs["limit"])
             self.assertEqual(b"write tests", process.stdin.data)
             self.assertTrue(process.stdin.closed)
             self.assertTrue(process.stdin.waited_closed)
