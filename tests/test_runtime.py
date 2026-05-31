@@ -145,6 +145,11 @@ class FailingPermalinkSlack(FakeSlackReplies):
         raise RuntimeError("chat.getPermalink failed: invalid_arguments")
 
 
+class FailingPermalinkWorkspaceSlack(FailingPermalinkSlack):
+    def workspace_url(self) -> str:
+        return "https://paofuanddddd.slack.com/"
+
+
 class FailingStreamAdapter:
     harness_id = "failing"
     capabilities = HarnessCapabilities(supports_streaming=True)
@@ -1424,6 +1429,52 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])
             self.assertEqual(("D_U_DARIN", "900.1", "draft reply"), slack.messages[-1])
             self.assertTrue(any("permalink lookup failed" in line for line in terminal))
+
+    def test_manager_dm_handoff_uses_workspace_url_when_permalink_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "innie.db"
+            db = connect(path)
+            initialize_schema(db)
+            item = make_trigger(
+                "EvRootUser",
+                channel="C1",
+                ts="100.1",
+                trigger_type="user_mention",
+                text="<@U_DARIN> draft my reply",
+            )
+            persist_trigger(db, item)
+            session = resolve_session_for_trigger(db, item, harness_id="scripted")
+            enqueue_trigger(db, session=session, trigger=item)
+            db.commit()
+            db.close()
+
+            slack = FailingPermalinkWorkspaceSlack()
+            adapter = ScriptedHarnessAdapter(
+                events=[
+                    HarnessEvent(type="output", message="draft reply"),
+                    HarnessEvent(type="completed"),
+                ]
+            )
+            manager = SessionManager(
+                path,
+                adapters={"scripted": adapter},
+                slack=slack,
+                workspace=Path(tmp),
+                watched_user_id="U_DARIN",
+            )
+            try:
+                asyncio.run(manager.run_until_idle())
+            finally:
+                manager.close()
+
+            self.assertEqual(
+                "Reply here with guidance for the draft.\n"
+                "Original message:\n"
+                "> <@U_DARIN> draft my reply\n"
+                "Original thread: https://paofuanddddd.slack.com/archives/C1/p1001",
+                slack.messages[0][2],
+            )
+            self.assertEqual({"unfurl_links": True, "unfurl_media": False}, slack.message_options[0])
 
     def test_manager_logs_task_started_to_terminal_not_slack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

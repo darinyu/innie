@@ -602,6 +602,10 @@ class SessionWorker:
             self._post_terminal_line(
                 f"session {self.session_id} slack permalink lookup failed for {row.slack_channel_id}:{row.slack_message_ts}: {exc}"
             )
+            workspace_link = self._workspace_thread_link(row.slack_channel_id, row.slack_message_ts)
+            if workspace_link:
+                permalink = workspace_link
+                unfurl_original_thread = True
         dm_channel = self._slack.open_dm(user=user_id)
         dm_ts = self._slack.post_message(
             channel=dm_channel,
@@ -611,6 +615,19 @@ class SessionWorker:
             unfurl_media=False,
         )
         return SlackDeliveryTarget(dm_channel, dm_ts or row.slack_message_ts)
+
+    def _workspace_thread_link(self, channel: str, message_ts: str) -> str | None:
+        workspace_url_fn = getattr(self._slack, "workspace_url", None)
+        if not callable(workspace_url_fn):
+            return None
+        try:
+            workspace_url = workspace_url_fn()
+        except Exception as exc:
+            self._post_terminal_line(f"session {self.session_id} slack workspace URL lookup failed: {exc}")
+            return None
+        if not workspace_url:
+            return None
+        return _workspace_thread_link(str(workspace_url), channel, message_ts)
 
     def _post_slack_message(
         self,
@@ -722,6 +739,10 @@ def _delivery_type_for_row(db: sqlite3.Connection, row) -> str:
 
 def _fallback_thread_link(channel: str, message_ts: str) -> str:
     return f"https://slack.com/app_redirect?channel={channel}&message_ts={message_ts}"
+
+
+def _workspace_thread_link(workspace_url: str, channel: str, message_ts: str) -> str:
+    return f"{workspace_url.rstrip('/')}/archives/{channel}/p{message_ts.replace('.', '')}"
 
 
 def _dm_handoff_text(row, permalink: str, *, raw_thread_link: bool = False) -> str:

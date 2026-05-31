@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 import asyncio
 from contextlib import suppress
 import json
@@ -13,7 +13,7 @@ from ..prompts import load_harness_system_prompt
 
 
 SpawnFn = Callable[..., Awaitable[asyncio.subprocess.Process]]
-CODEX_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
+CODEX_STDOUT_READ_BYTES = 64 * 1024
 
 
 class CodexCliAdapter:
@@ -91,7 +91,7 @@ class CodexCliAdapter:
             yield HarnessEvent(type="failed", message="Codex stdout was not captured")
             return
         pending_output: HarnessEvent | None = None
-        async for raw_line in stdout:
+        async for raw_line in _iter_stdout_lines(stdout):
             line = raw_line.decode("utf-8").strip()
             if not line:
                 continue
@@ -139,7 +139,6 @@ class CodexCliAdapter:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            limit=CODEX_STREAM_LIMIT_BYTES,
         )
 
 
@@ -149,6 +148,30 @@ def _system_prompt_config_arg() -> str:
 
 def _extra_codex_exec_args() -> tuple[str, ...]:
     return tuple(shlex.split(os.environ.get("INNIE_CODEX_EXEC_ARGS", "")))
+
+
+async def _iter_stdout_lines(stdout: Any) -> AsyncIterator[bytes]:
+    read = getattr(stdout, "read", None)
+    if read is None:
+        async for raw_line in stdout:
+            yield raw_line
+        return
+
+    buffer = bytearray()
+    while True:
+        chunk = await read(CODEX_STDOUT_READ_BYTES)
+        if not chunk:
+            if buffer:
+                yield bytes(buffer)
+            return
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                break
+            line_end = newline_index + 1
+            yield bytes(buffer[:line_end])
+            del buffer[:line_end]
 
 
 class CodexSessionAdapter:
