@@ -759,14 +759,7 @@ def _workspace_thread_link(workspace_url: str, channel: str, message_ts: str) ->
 
 def _dm_handoff_text(row, permalink: str) -> str:
     thread_link = f"<{permalink}|open thread>"
-    original = _compact_original_text(str(row.text or ""))
-    if not original:
-        return f"Reply here with guidance for the draft.\nThread: {thread_link}"
-    return (
-        "Reply here with guidance for the draft.\n"
-        f"{_slack_quote(original)}\n"
-        f"Thread: {thread_link}"
-    )
+    return f"Hi, here is the {thread_link} you are tagged on. Let me help draft a reply."
 
 
 def _compact_original_text(text: str, *, limit: int = 500) -> str:
