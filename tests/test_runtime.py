@@ -1368,10 +1368,10 @@ class RuntimeTest(unittest.TestCase):
                 "Reply here with guidance for the draft.\n"
                 "Original message:\n"
                 "> <@U_DARIN> draft my reply\n"
-                "Original thread: <https://slack.example/archives/C1/p1001|open thread>",
+                "Original thread: https://slack.example/archives/C1/p1001",
                 handoff[2],
             )
-            self.assertEqual({"unfurl_links": False, "unfurl_media": False}, slack.message_options[0])
+            self.assertEqual({"unfurl_links": True, "unfurl_media": False}, slack.message_options[0])
             self.assertEqual(("D_U_DARIN", "900.2", "draft reply"), slack.updates[-1])
 
     def test_manager_dm_handoff_falls_back_when_permalink_fails(self) -> None:
