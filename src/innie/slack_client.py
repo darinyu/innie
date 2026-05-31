@@ -21,6 +21,7 @@ SLACK_LOGIN_SAMPLE_BYTES = 128 * 1024
 class SlackWebClient:
     def __init__(self, token: str) -> None:
         self._token = token
+        self._workspace_url: str | None = None
 
     def add_reaction(self, *, channel: str, timestamp: str, name: str) -> None:
         self._post_json("reactions.add", {"channel": channel, "timestamp": timestamp, "name": name})
@@ -75,6 +76,14 @@ class SlackWebClient:
         result = self._post_json("chat.getPermalink", {"channel": channel, "message_ts": message_ts})
         permalink = result.get("permalink")
         return str(permalink) if permalink else None
+
+    def workspace_url(self) -> str | None:
+        if self._workspace_url is not None:
+            return self._workspace_url
+        result = self._post_json("auth.test", {})
+        url = result.get("url")
+        self._workspace_url = str(url) if url else ""
+        return self._workspace_url or None
 
     def update_message(
         self,
