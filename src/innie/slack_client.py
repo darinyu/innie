@@ -83,8 +83,9 @@ class SlackWebClient:
         unfurl_links: bool | None = None,
         unfurl_media: bool | None = None,
     ) -> SlackPostResult:
+        channel = self.open_dm(user=user)
         return self.post_message_result(
-            channel=user,
+            channel=channel,
             thread_ts=None,
             text=text,
             blocks=blocks,

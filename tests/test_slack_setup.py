@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 from innie.slack_setup import (
+    SlackApiError,
     _collect_oauth_code,
     _oauth_lines,
     _plain_text,
@@ -25,6 +26,8 @@ class FakeSlackApi:
         self.calls.append((method, token, payload))
         if method == "auth.test":
             return {"ok": True, "user_id": "U_BOT"}
+        if method == "conversations.open":
+            return {"ok": True, "channel": {"id": "D_INSTALLER"}}
         if method == "apps.connections.open":
             return {"ok": True, "url": "wss://example.test/socket"}
         raise AssertionError(f"unexpected json method {method}")
@@ -103,7 +106,8 @@ class SlackSetupTest(unittest.TestCase):
             self.assertIn("Bot user     U_BOT", result_text)
             self.assertIn("Trigger      watched user mention", result_text)
             self.assertIn("Tokens       saved to", result_text)
-            self.assertIn("secrets.json (0600)", result_text)
+            self.assertIn("secrets.", result_text)
+            self.assertIn("json (0600)", result_text)
             self.assertIn("Dashboard    innie dash", result_text)
             self.assertIn("=" * 88, result_text)
             self.assertIn("|___|_| |_|_| |_|_|\\___|", result_text)
@@ -178,6 +182,46 @@ class SlackSetupTest(unittest.TestCase):
             self.assertIn("message.groups", events)
             config = (workspace / ".innie" / "config.yaml").read_text()
             self.assertIn("watched_user_id: U_INSTALLER", config)
+
+    def test_setup_fails_when_bot_cannot_open_dm_handoff(self) -> None:
+        class MissingImScopeApi(FakeSlackApi):
+            def post_json(self, method: str, token: str, payload: dict) -> dict:
+                if method == "conversations.open":
+                    raise SlackApiError("conversations.open failed: missing_scope (needed=im:write, provided=chat:write)")
+                return super().post_json(method, token, payload)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            answers = iter(
+                [
+                    "",
+                    "",
+                    "",
+                    "client-id",
+                    "client-secret",
+                    "",
+                    "abc123",
+                ]
+            )
+
+            with (
+                mock.patch("innie.slack_setup._port_in_use", return_value=False),
+                mock.patch("innie.slack_setup.http.server.HTTPServer", side_effect=OSError("busy")),
+            ):
+                result = run_slack_setup(
+                    workspace,
+                    api=MissingImScopeApi(),
+                    prompt=lambda _text: next(answers),
+                    prompt_secret=lambda _text: next(answers),
+                    output=lambda _text: None,
+                    oauth_timeout_seconds=0,
+                )
+
+            self.assertFalse(result.ok)
+            result_text = "\n".join(result.messages)
+            self.assertIn("cannot open a DM for handoff", result_text)
+            self.assertIn("needed=im:write", result_text)
+            self.assertIn("Reinstall the Slack app", result_text)
 
     def test_xapp_token_prompt_retries_blank_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
