@@ -722,13 +722,15 @@ def _goal_with_slack_context(db: sqlite3.Connection, row) -> str:
             row.text,
             "\n".join(
                 [
-                    "Slack trigger context:",
+                    "Variable turn context:",
+                    "Slack trigger:",
                     f"- channel: {row.slack_channel_id}",
                     f"- thread_ts: {thread_ts}",
                     f"- message_ts: {row.slack_message_ts}",
                     f"- response_mode: {delivery_type}",
                     f"- output_instruction: {output_instruction}",
-                    "Use the active harness environment to retrieve Slack context only when needed.",
+                    "- routing_note: Innie will route the final answer back to the Slack destination above.",
+                    "- context_lookup: Use the active harness environment to inspect Slack only when the task needs more thread context.",
                 ]
             ),
         ]
