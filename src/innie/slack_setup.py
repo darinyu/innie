@@ -52,7 +52,7 @@ class SlackApi:
         with request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         if not result.get("ok"):
-            raise SlackApiError(f"{method} failed: {result.get('error', 'unknown_error')}")
+            raise SlackApiError(_slack_error_message(method, result))
         return result
 
     def post_form(self, method: str, payload: dict[str, str]) -> dict[str, Any]:
@@ -62,7 +62,7 @@ class SlackApi:
         with request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         if not result.get("ok"):
-            raise SlackApiError(f"{method} failed: {result.get('error', 'unknown_error')}")
+            raise SlackApiError(_slack_error_message(method, result))
         return result
 
 
@@ -241,6 +241,18 @@ def run_slack_setup(
         )
     auth = api.post_json("auth.test", bot_token, {})
     bot_user_id = auth.get("user_id", "")
+    try:
+        api.post_json("conversations.open", bot_token, {"users": watched_user_id})
+    except SlackApiError as exc:
+        return SlackSetupResult(
+            ok=False,
+            messages=messages
+            + [
+                "Slack OAuth succeeded, but the bot token cannot open a DM for handoff.",
+                f"{exc}",
+                "Reinstall the Slack app from the generated manifest so the bot receives the im:write scope.",
+            ],
+        )
 
     ui.step(
         "Step 6/6",
@@ -463,6 +475,18 @@ def _oauth_url(client_id: str, scopes: list[str], redirect_url: str) -> str:
             "redirect_uri": redirect_url,
         }
     )
+
+
+def _slack_error_message(method: str, result: dict[str, Any]) -> str:
+    message = f"{method} failed: {result.get('error', 'unknown_error')}"
+    details = []
+    for key in ("needed", "provided"):
+        value = result.get(key)
+        if value:
+            details.append(f"{key}={value}")
+    if details:
+        message = f"{message} ({', '.join(details)})"
+    return message
 
 
 def _port_in_use(port: int) -> bool:

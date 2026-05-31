@@ -26,6 +26,8 @@ class SlackWebClientTest(unittest.TestCase):
         class FakeClient(SlackWebClient):
             def api_call(self, method: str, payload: dict) -> dict:
                 calls.append((method, payload))
+                if method == "conversations.open":
+                    return {"ok": True, "channel": {"id": "D123"}}
                 return {"ok": True, "channel": "D123", "ts": "171.2"}
 
         result = FakeClient("xoxb-test-token").post_direct_message(
@@ -40,8 +42,12 @@ class SlackWebClientTest(unittest.TestCase):
         self.assertEqual(
             [
                 (
+                    "conversations.open",
+                    {"users": "U123"},
+                ),
+                (
                     "chat.postMessage",
-                    {"channel": "U123", "text": "handoff", "unfurl_links": False, "unfurl_media": False},
+                    {"channel": "D123", "text": "handoff", "unfurl_links": False, "unfurl_media": False},
                 )
             ],
             calls,
