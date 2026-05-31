@@ -31,6 +31,12 @@ class RunOnceResult:
     resolved_slack: Any | None = None
 
 
+@dataclass(frozen=True)
+class ConsoleSlackPostResult:
+    channel: str
+    ts: str | None
+
+
 class ConsoleSlackClient:
     def __init__(self, *, output: OutputFn = print) -> None:
         self._output = output
@@ -56,6 +62,26 @@ class ConsoleSlackClient:
             return ts
         self._output(f"message {channel} {thread_ts} {text}")
         return thread_ts
+
+    def post_direct_message(
+        self,
+        *,
+        user: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+        unfurl_links: bool | None = None,
+        unfurl_media: bool | None = None,
+    ) -> ConsoleSlackPostResult:
+        channel = f"D_{user}"
+        ts = self.post_message(
+            channel=channel,
+            thread_ts=None,
+            text=text,
+            blocks=blocks,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+        )
+        return ConsoleSlackPostResult(channel=channel, ts=ts)
 
     def post_ephemeral(
         self,

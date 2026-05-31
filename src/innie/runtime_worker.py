@@ -606,14 +606,26 @@ class SessionWorker:
             if workspace_link:
                 permalink = workspace_link
                 unfurl_original_thread = True
-        dm_channel = self._slack.open_dm(user=user_id)
-        dm_ts = self._slack.post_message(
-            channel=dm_channel,
-            thread_ts=None,
-            text=_dm_handoff_text(row, permalink, raw_thread_link=unfurl_original_thread),
-            unfurl_links=unfurl_original_thread,
-            unfurl_media=False,
-        )
+        handoff_text = _dm_handoff_text(row, permalink)
+        post_direct_message = getattr(self._slack, "post_direct_message", None)
+        if callable(post_direct_message):
+            dm_result = post_direct_message(
+                user=user_id,
+                text=handoff_text,
+                unfurl_links=unfurl_original_thread,
+                unfurl_media=False,
+            )
+            dm_channel = str(dm_result.channel)
+            dm_ts = dm_result.ts
+        else:
+            dm_channel = self._slack.open_dm(user=user_id)
+            dm_ts = self._slack.post_message(
+                channel=dm_channel,
+                thread_ts=None,
+                text=handoff_text,
+                unfurl_links=unfurl_original_thread,
+                unfurl_media=False,
+            )
         return SlackDeliveryTarget(dm_channel, dm_ts or row.slack_message_ts)
 
     def _workspace_thread_link(self, channel: str, message_ts: str) -> str | None:
@@ -745,15 +757,15 @@ def _workspace_thread_link(workspace_url: str, channel: str, message_ts: str) ->
     return f"{workspace_url.rstrip('/')}/archives/{channel}/p{message_ts.replace('.', '')}"
 
 
-def _dm_handoff_text(row, permalink: str, *, raw_thread_link: bool = False) -> str:
-    thread_link = permalink if raw_thread_link else f"<{permalink}|open thread>"
+def _dm_handoff_text(row, permalink: str) -> str:
+    thread_link = f"<{permalink}|open thread>"
     original = _compact_original_text(str(row.text or ""))
     if not original:
-        return f"Reply here with guidance for the draft.\nOriginal thread: {thread_link}"
+        return f"Reply here with guidance for the draft.\nThread: {thread_link}"
     return (
         "Reply here with guidance for the draft.\n"
-        f"Original message:\n{_slack_quote(original)}\n"
-        f"Original thread: {thread_link}"
+        f"{_slack_quote(original)}\n"
+        f"Thread: {thread_link}"
     )
 
 

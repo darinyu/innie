@@ -58,7 +58,7 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual("echo", result.harness_id)
             self.assertTrue((workspace / ".innie" / "innie.db").exists())
             self.assertNotIn("reaction C1 100.1 eyes", printed)
-            self.assertIn("dm U_DARIN D_U_DARIN", printed)
+            self.assertTrue(any(line.startswith("message D_U_DARIN root ") for line in printed))
             self.assertIn("message D_U_DARIN 900.1 <@U_DARIN> hello from slack", printed)
 
     def test_run_once_payload_verbose_logs_session_before_harness_finishes(self) -> None:
