@@ -592,8 +592,12 @@ class SessionWorker:
         if self._slack is None:
             return SlackDeliveryTarget(row.slack_channel_id, row.slack_message_ts)
         permalink = _fallback_thread_link(row.slack_channel_id, row.slack_message_ts)
+        unfurl_original_thread = False
         try:
-            permalink = self._slack.get_permalink(channel=row.slack_channel_id, message_ts=row.slack_message_ts) or permalink
+            direct_permalink = self._slack.get_permalink(channel=row.slack_channel_id, message_ts=row.slack_message_ts)
+            if direct_permalink:
+                permalink = direct_permalink
+                unfurl_original_thread = True
         except Exception as exc:
             self._post_terminal_line(
                 f"session {self.session_id} slack permalink lookup failed for {row.slack_channel_id}:{row.slack_message_ts}: {exc}"
@@ -602,8 +606,8 @@ class SessionWorker:
         dm_ts = self._slack.post_message(
             channel=dm_channel,
             thread_ts=None,
-            text=_dm_handoff_text(row, permalink),
-            unfurl_links=False,
+            text=_dm_handoff_text(row, permalink, raw_thread_link=unfurl_original_thread),
+            unfurl_links=unfurl_original_thread,
             unfurl_media=False,
         )
         return SlackDeliveryTarget(dm_channel, dm_ts or row.slack_message_ts)
@@ -720,14 +724,15 @@ def _fallback_thread_link(channel: str, message_ts: str) -> str:
     return f"https://slack.com/app_redirect?channel={channel}&message_ts={message_ts}"
 
 
-def _dm_handoff_text(row, permalink: str) -> str:
+def _dm_handoff_text(row, permalink: str, *, raw_thread_link: bool = False) -> str:
+    thread_link = permalink if raw_thread_link else f"<{permalink}|open thread>"
     original = _compact_original_text(str(row.text or ""))
     if not original:
-        return f"Reply here with guidance for the draft.\nOriginal thread: <{permalink}|open thread>"
+        return f"Reply here with guidance for the draft.\nOriginal thread: {thread_link}"
     return (
         "Reply here with guidance for the draft.\n"
         f"Original message:\n{_slack_quote(original)}\n"
-        f"Original thread: <{permalink}|open thread>"
+        f"Original thread: {thread_link}"
     )
 
 

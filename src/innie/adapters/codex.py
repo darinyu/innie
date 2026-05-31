@@ -13,6 +13,7 @@ from ..prompts import load_harness_system_prompt
 
 
 SpawnFn = Callable[..., Awaitable[asyncio.subprocess.Process]]
+CODEX_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 
 
 class CodexCliAdapter:
@@ -138,6 +139,7 @@ class CodexCliAdapter:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=CODEX_STREAM_LIMIT_BYTES,
         )
 
 
