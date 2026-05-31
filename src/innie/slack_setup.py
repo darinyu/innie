@@ -10,7 +10,7 @@ import time
 from typing import Any, Callable
 from urllib import parse, request
 
-from .config import load_secrets, write_secrets, write_workspace_config
+from .config import load_secrets, secret_store_for_workspace, write_secrets, write_workspace_config
 from .terminal_ui import WizardUI, success_panel
 
 
@@ -266,6 +266,7 @@ def run_slack_setup(
             "slack_client_secret": client_secret,
         },
     )
+    secret_store_description = secret_store_for_workspace(workspace).description
     write_workspace_config(
         workspace,
         app_id=app_id,
@@ -280,6 +281,7 @@ def run_slack_setup(
             app_id=app_id,
             bot_user_id=bot_user_id,
             watched_user_id=watched_user_id,
+            secret_store_description=secret_store_description,
         ),
     )
 
@@ -302,6 +304,7 @@ def _success_summary(
     app_id: str,
     bot_user_id: str,
     watched_user_id: str | None,
+    secret_store_description: str,
 ) -> list[str]:
     watched_label = watched_user_id or "not used"
     body = "\n".join(
@@ -319,7 +322,7 @@ def _success_summary(
             f"Bot user     {bot_user_id or 'unknown bot user'}",
             "Trigger      watched user mention",
             f"Watched user {watched_label}",
-            "Tokens       saved to .innie/secrets.json (0600)",
+            f"Tokens       saved to {secret_store_description}",
             "",
             "Next         innie run --once --harness codex",
             "Alt          innie run --once --harness claude",
