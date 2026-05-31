@@ -322,6 +322,17 @@ Near-term prototype milestones:
   the adapter contract.
 - Add production-oriented docs after the local prototype proves the core loop.
 
+## Agent Skill
+
+The canonical agent guide for working on Innie lives at
+[`agent/innie/SKILL.md`](agent/innie/SKILL.md). It documents the Slack lifecycle,
+auth and secret-store rules, behavior boundaries, harness adapter contract, and
+safe validation workflow for AI coding agents.
+
+Future Codex, Claude Code, OpenClaw, or marketplace-specific agent packages
+should be generated from that source instead of maintained as separate manual
+copies.
+
 ## Contributing
 
 This repo is still early, so small, focused PRs are the best way to contribute.

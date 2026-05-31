@@ -1,0 +1,3 @@
+display_name: Innie
+short_description: Work safely on Innie's Slack lifecycle, auth boundaries, and harness adapters.
+default_prompt: Use the Innie skill to inspect the current repo, preserve auth boundaries, and make a focused, tested change.
